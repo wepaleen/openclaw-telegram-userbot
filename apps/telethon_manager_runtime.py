@@ -85,6 +85,14 @@ class TelethonOpenClawRuntime:
 
         event.text = normalized_text
 
+        # Instant 👀 — acknowledge the message was seen
+        try:
+            await self.transport.send_reaction(
+                event.peer, message_id=event.message_id, emoticon="👀",
+            )
+        except Exception:
+            pass
+
         # Show "typing..." indicator while processing
         try:
             await self.transport.set_typing(
@@ -93,7 +101,7 @@ class TelethonOpenClawRuntime:
         except Exception:
             pass
 
-        reaction = "👀"  # default: "seen"
+        reaction: str | None = None
         lock = self._locks[event.session_key]
         async with lock:
             try:
@@ -116,13 +124,14 @@ class TelethonOpenClawRuntime:
                 )
                 reaction = "🤕"
 
-        # Context-aware reaction on the user's original message
-        try:
-            await self.transport.send_reaction(
-                event.peer, message_id=event.message_id, emoticon=reaction,
-            )
-        except Exception as e:
-            log.debug("Could not set reaction %s: %s", reaction, e)
+        # Replace 👀 with context-aware reaction after response
+        if reaction:
+            try:
+                await self.transport.send_reaction(
+                    event.peer, message_id=event.message_id, emoticon=reaction,
+                )
+            except Exception as e:
+                log.debug("Could not set reaction %s: %s", reaction, e)
 
     def _normalize_event_text(self, event: InboundTelegramEvent) -> str | None:
         text = (event.text or "").strip()
