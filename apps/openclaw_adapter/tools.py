@@ -135,13 +135,12 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "set_reminder",
-                "description": "Создать одноразовое или повторяющееся напоминание в task core. target_query указывай только если напоминание нужно доставить другому конкретному адресату.",
+                "description": "Создать одноразовое или повторяющееся напоминание в текущем чате, текущей личке или текущей теме. Для отложенной отправки другому адресату используй schedule_action.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "text": {"type": "string"},
                         "time_phrase": {"type": "string"},
-                        "target_query": {"type": "string"},
                         "recurrence": {"type": "string"},
                     },
                     "required": ["text", "time_phrase"],

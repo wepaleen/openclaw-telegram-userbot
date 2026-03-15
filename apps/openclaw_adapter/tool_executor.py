@@ -342,13 +342,6 @@ class OpenClawToolExecutor:
 
         target_peer = event.peer
         target_topic_id = event.top_msg_id
-        if self._as_str(args.get("target_query")):
-            target_peer, _ = await self._resolve_peer_query(
-                query=str(args["target_query"]),
-                event=event,
-            )
-            if target_peer.peer_id != event.peer.peer_id:
-                target_topic_id = None
 
         result = await create_reminder(
             text=str(args["text"]),
@@ -361,6 +354,12 @@ class OpenClawToolExecutor:
         result["target_peer"] = _serialize_peer(target_peer)
         result["remind_at_local"] = parsed_time["remind_at_local"]
         result["timezone"] = parsed_time["timezone"]
+        if self._as_str(args.get("target_query")):
+            result["note"] = (
+                "set_reminder always delivers to the current context; "
+                "target_query was ignored. Use schedule_action for delayed delivery "
+                "to another recipient."
+            )
         return result
 
     async def _list_reminders(self, args: dict[str, Any]) -> dict[str, Any]:
