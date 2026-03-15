@@ -11,6 +11,16 @@ from apps.openclaw_adapter.client import OpenClawChatClient
 from apps.openclaw_adapter.instructions import DEFAULT_SYSTEM_INSTRUCTIONS
 from apps.openclaw_adapter.local_commands import try_parse_local
 from apps.openclaw_adapter.tools import build_default_tool_schemas
+from apps.security import (
+    Role,
+    SecurityViolation,
+    check_input_safety,
+    filter_result_for_role,
+    filter_tool_schemas,
+    get_user_role,
+    is_tool_allowed,
+    sanitize_tool_args,
+)
 from config import settings
 from shared.schemas.telegram import InboundTelegramEvent, PeerRef
 
@@ -88,13 +98,42 @@ class OpenClawAgentRuntime:
         execute_tool: ToolExecutor,
         max_tool_rounds: int | None = None,
     ) -> AgentRunResult:
+        # ── Security: role & input checks ──
+        user_role = get_user_role(event.sender_id)
+        if user_role == Role.BLOCKED:
+            log.warning("Blocked user %s attempted access", event.sender_id)
+            return AgentRunResult(
+                text="Доступ запрещён.",
+                messages=[], raw_response={}, tool_rounds=0,
+            )
+
+        safety_warning = check_input_safety(event.text)
+        if safety_warning:
+            log.warning("Input blocked for user %s: %s", event.sender_id, event.text[:100])
+            return AgentRunResult(
+                text=safety_warning,
+                messages=[], raw_response={}, tool_rounds=0,
+            )
+
         # ── Level 1: Local regex parser (0 tokens, free) ──
         local_cmd = try_parse_local(event.text)
         if local_cmd is not None:
+            if not is_tool_allowed(local_cmd.tool_name, user_role):
+                return AgentRunResult(
+                    text=f"У вас нет доступа к команде {local_cmd.tool_name}.",
+                    messages=[], raw_response={}, tool_rounds=0,
+                )
             log.info("Level-1 local command: %s", local_cmd.tool_name)
-            result = await execute_tool(local_cmd.tool_name, local_cmd.tool_args, event)
+            try:
+                safe_args = sanitize_tool_args(local_cmd.tool_name, local_cmd.tool_args)
+            except SecurityViolation as e:
+                return AgentRunResult(
+                    text=str(e), messages=[], raw_response={}, tool_rounds=0,
+                )
+            result = await execute_tool(local_cmd.tool_name, safe_args, event)
             if not result.get("error"):
-                text = self._format_local_result(local_cmd.tool_name, result)
+                filtered = filter_result_for_role(result, user_role)
+                text = self._format_local_result(local_cmd.tool_name, filtered)
                 return AgentRunResult(
                     text=text,
                     messages=[],
@@ -112,15 +151,17 @@ class OpenClawAgentRuntime:
             {"role": "user", "content": user_content},
         ]
 
+        # Filter tools based on user role
+        role_tools = filter_tool_schemas(self.tools, user_role)
         needs_tools = self._looks_like_action(event.text)
 
         if needs_tools:
             # Action request → use paid tool-calling LLM (OpenRouter/DeepSeek)
-            log.info("Routing to tool LLM (action detected)")
+            log.info("Routing to tool LLM (action detected, role=%s, tools=%d)", user_role.value, len(role_tools))
             first_tool_choice = "required"
             response = await self.client.complete(
                 messages=messages,
-                tools=self.tools,
+                tools=role_tools,
                 session_key=event.session_key,
                 tool_choice=first_tool_choice,
             )
@@ -146,7 +187,7 @@ class OpenClawAgentRuntime:
             first_tool_choice = "auto"
             response = await self.client.complete(
                 messages=messages,
-                tools=self.tools,
+                tools=role_tools,
                 session_key=event.session_key,
                 tool_choice=first_tool_choice,
             )
@@ -171,6 +212,19 @@ class OpenClawAgentRuntime:
                     call.call_id,
                     json.dumps(call.arguments, ensure_ascii=False)[:500],
                 )
+
+                # Security: check tool permission and sanitize args
+                if not is_tool_allowed(call.name, user_role):
+                    log.warning("Tool %s blocked for role %s", call.name, user_role.value)
+                    result = {"error": f"Нет доступа к {call.name}"}
+                    messages.append({"role": "tool", "tool_call_id": call.call_id, "content": json.dumps(result, ensure_ascii=False)})
+                    continue
+                try:
+                    call.arguments = sanitize_tool_args(call.name, call.arguments)
+                except SecurityViolation as e:
+                    result = {"error": str(e)}
+                    messages.append({"role": "tool", "tool_call_id": call.call_id, "content": json.dumps(result, ensure_ascii=False)})
+                    continue
                 result = await execute_tool(call.name, call.arguments, event)
                 result_str = json.dumps(result, ensure_ascii=False)
                 log.info(
@@ -189,7 +243,7 @@ class OpenClawAgentRuntime:
 
             response = await self.client.complete(
                 messages=messages,
-                tools=self.tools,
+                tools=role_tools,
                 session_key=event.session_key,
                 tool_choice="auto",
             )

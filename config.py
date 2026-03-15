@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _parse_user_ids(raw: str) -> set[int]:
+    ids: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part and part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
 def _parse_chat_ids(raw: str) -> set[int]:
     ids: set[int] = set()
     for part in raw.split(","):
@@ -73,6 +82,17 @@ class Settings:
             if os.getenv("MAIN_FORUM_CHAT_ID", "").strip()
             else None
         )
+    )
+
+    # Security & Roles
+    admin_user_ids: set[int] = field(
+        default_factory=lambda: _parse_user_ids(os.getenv("ADMIN_USER_IDS", ""))
+    )
+    allowed_user_ids: set[int] = field(
+        default_factory=lambda: _parse_user_ids(os.getenv("ALLOWED_USER_IDS", ""))
+    )
+    blocked_user_ids: set[int] = field(
+        default_factory=lambda: _parse_user_ids(os.getenv("BLOCKED_USER_IDS", ""))
     )
 
     # Database
