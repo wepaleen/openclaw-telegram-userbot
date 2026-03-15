@@ -168,7 +168,13 @@ class TelethonOpenClawRuntime:
         text: str,
         topic_id: int | None = None,
     ) -> None:
-        peer = await self.transport.resolve_peer_ref(target if target is not None else chat_id)
+        resolve_target: str | int = chat_id
+        if target is not None:
+            if isinstance(target, str) and target and not target.startswith("@"):
+                resolve_target = f"@{target}"
+            else:
+                resolve_target = target
+        peer = await self.transport.resolve_peer_ref(resolve_target)
         await self.transport.send(
             OutboundTelegramCommand(
                 target_peer=peer,

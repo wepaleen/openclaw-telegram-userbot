@@ -161,7 +161,10 @@ class TelethonBridgeClient:
             return await self.client.get_input_entity(peer.peer_id)
 
         if isinstance(peer, str):
-            value = peer if peer.startswith("@") else peer.strip()
+            value = peer.strip()
+            # Ensure usernames are prefixed with @ for Telethon resolution
+            if value and not value.startswith("@") and not value.lstrip("-").isdigit():
+                value = f"@{value}"
             return await self.client.get_input_entity(value)
 
         return await self.client.get_input_entity(peer)
