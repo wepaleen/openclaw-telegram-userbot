@@ -85,14 +85,6 @@ class TelethonOpenClawRuntime:
 
         event.text = normalized_text
 
-        # Acknowledge: react with 👀 so the user knows the bot saw the message
-        try:
-            await self.transport.send_reaction(
-                event.peer, message_id=event.message_id, emoticon="👀",
-            )
-        except Exception as e:
-            log.debug("Could not set 👀 reaction: %s", e)
-
         # Show "typing..." indicator while processing
         try:
             await self.transport.set_typing(
@@ -101,24 +93,36 @@ class TelethonOpenClawRuntime:
         except Exception:
             pass
 
+        reaction = "👀"  # default: "seen"
         lock = self._locks[event.session_key]
         async with lock:
             try:
                 result = await self.adapter.handle_event(event)
                 if result.text.strip():
                     await self._reply_text(event, result.text)
+                reaction = self._pick_reaction(event.text, result.text, result.tool_rounds)
             except httpx.HTTPStatusError as e:
                 body = e.response.text[:1000] if e.response is not None else ""
                 await self._reply_text(
                     event,
                     f"OpenClaw вернул HTTP {e.response.status_code if e.response else '?'}:\n{body}",
                 )
+                reaction = "🤕"
             except Exception as e:
                 log.exception("Runtime failed for event %s", event.event_id)
                 await self._reply_text(
                     event,
                     f"Ошибка runtime: {type(e).__name__}: {e}",
                 )
+                reaction = "🤕"
+
+        # Context-aware reaction on the user's original message
+        try:
+            await self.transport.send_reaction(
+                event.peer, message_id=event.message_id, emoticon=reaction,
+            )
+        except Exception as e:
+            log.debug("Could not set reaction %s: %s", reaction, e)
 
     def _normalize_event_text(self, event: InboundTelegramEvent) -> str | None:
         text = (event.text or "").strip()
@@ -146,6 +150,34 @@ class TelethonOpenClawRuntime:
             return text
 
         return None
+
+    @staticmethod
+    def _pick_reaction(user_text: str, bot_reply: str, tool_rounds: int) -> str:
+        """Choose a context-aware reaction emoji based on input/output."""
+        low_user = user_text.lower()
+        low_reply = bot_reply.lower()
+
+        # Greetings
+        if any(w in low_user for w in ("привет", "здравств", "добр", "hello", "hi ", "хай")):
+            return "👋"
+
+        # Thanks
+        if any(w in low_user for w in ("спасибо", "благодар", "thanks", "thx")):
+            return "❤️"
+
+        # Task/reminder done
+        if any(w in low_reply for w in (
+            "напоминание установлено", "задача создана", "напоминание отменено",
+            "задача выполнена", "сообщение отправлено", "удален",
+        )):
+            return "✅"
+
+        # Used tools (action performed)
+        if tool_rounds > 0:
+            return "⚡"
+
+        # Conversational reply
+        return "👌"
 
     async def _reply_text(self, event: InboundTelegramEvent, text: str) -> None:
         await self._send_text(
