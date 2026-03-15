@@ -37,6 +37,18 @@ _ACTION_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Emergency escalation patterns — always route to tool-calling LLM
+_ESCALATION_KEYWORDS = re.compile(
+    r"расторга[юет]|расторжени[еяю]|разрыва[юет]\s+договор|"
+    r"уходи[мт]|ухожу|покида[юет]|прекраща[юет]|"
+    r"сайт\s+(?:упал|не\s+работает|лежит|недоступен)|"
+    r"оплат[аеуы]\s+(?:не\s+прошл|проблем|задерж)|"
+    r"суд\s|иск\s|претензи[яию]|юрист|адвокат|"
+    r"репутаци[яию]|скандал|негатив\s+в\s+(?:сми|соцсет|интернет)|"
+    r"отказыва[юет](?:сь|мся)|отказ\s+от\s+(?:услуг|сотрудничеств)",
+    re.IGNORECASE,
+)
+
 
 @dataclass(slots=True)
 class AgentRunResult:
@@ -146,14 +158,28 @@ class OpenClawAgentRuntime:
         # ── Level 2/3: LLM-based processing ──
         max_rounds = max_tool_rounds or settings.max_tool_calls
         user_content = self._build_user_content(event, recent_context, available_chats)
+
+        system_prompt = self.system_instructions
+        is_emergency = self._is_emergency(event.text)
+        if is_emergency:
+            system_prompt += (
+                "\n\n## ⚠️ ОБНАРУЖЕНА ЭКСТРЕННАЯ СИТУАЦИЯ\n"
+                "В сообщении пользователя обнаружены признаки экстренного случая. "
+                "Ты ОБЯЗАН НЕМЕДЛЕННО:\n"
+                "1. Вызвать send_message с текстом, содержащим @dlnadezhda и @anylise и краткое описание ситуации\n"
+                "2. Только ПОСЛЕ этого — ответить пользователю\n"
+                "НЕ просто говори «передам коллегам». ВЫЗОВИ send_message tool прямо сейчас."
+            )
+            log.warning("Emergency escalation detected in message from %s: %s", event.sender_id, event.text[:100])
+
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_instructions},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
 
         # Filter tools based on user role
         role_tools = filter_tool_schemas(self.tools, user_role)
-        needs_tools = self._looks_like_action(event.text)
+        needs_tools = self._looks_like_action(event.text) or is_emergency
 
         if needs_tools:
             # Action request → use paid tool-calling LLM (OpenRouter/DeepSeek)
@@ -192,11 +218,33 @@ class OpenClawAgentRuntime:
                 tool_choice=first_tool_choice,
             )
 
+        escalation_sent = False  # Track if escalation message was sent during tool loop
+
         for tool_round in range(max_rounds):
             calls = self.client.extract_tool_calls(response)
             if not calls:
+                llm_text = self.client.extract_text(response)
+
+                # Fallback: if emergency detected but no escalation was sent,
+                # force escalation by calling send_message directly
+                if is_emergency and not escalation_sent:
+                    log.warning(
+                        "Emergency fallback: LLM finished without escalation, forcing send_message"
+                    )
+                    escalation_text = (
+                        f"⚠️ @dlnadezhda @anylise, добрый день! Прошу обратить внимание — "
+                        f"поступило важное сообщение от клиента: «{event.text[:500]}». "
+                        f"Требуется оперативное участие."
+                    )
+                    escalation_result = await execute_tool(
+                        "send_message",
+                        {"text": escalation_text},
+                        event,
+                    )
+                    log.info("Emergency fallback send_message result: %s", escalation_result)
+
                 return AgentRunResult(
-                    text=self.client.extract_text(response),
+                    text=llm_text,
                     messages=messages,
                     raw_response=response,
                     tool_rounds=tool_round,
@@ -233,6 +281,12 @@ class OpenClawAgentRuntime:
                     call.call_id,
                     result_str[:500],
                 )
+                # Track if escalation was sent via send_message with @mentions
+                if is_emergency and call.name == "send_message":
+                    msg_text = str(call.arguments.get("text", ""))
+                    if "@dlnadezhda" in msg_text or "@anylise" in msg_text:
+                        escalation_sent = True
+                        log.info("Escalation tag detected in send_message call")
                 messages.append(
                     {
                         "role": "tool",
@@ -309,7 +363,11 @@ class OpenClawAgentRuntime:
 
     @staticmethod
     def _looks_like_action(text: str) -> bool:
-        return bool(_ACTION_KEYWORDS.search(text))
+        return bool(_ACTION_KEYWORDS.search(text) or _ESCALATION_KEYWORDS.search(text))
+
+    @staticmethod
+    def _is_emergency(text: str) -> bool:
+        return bool(_ESCALATION_KEYWORDS.search(text))
 
     def _build_user_content(
         self,
