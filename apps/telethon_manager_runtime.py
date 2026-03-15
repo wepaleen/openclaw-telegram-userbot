@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from apps.telethon_bridge.formatting import md_to_tg_html
 from apps.openclaw_adapter import (
     OpenClawAdapterService,
     OpenClawToolExecutor,
@@ -210,7 +211,8 @@ class TelethonOpenClawRuntime:
         top_msg_id: int | None = None,
         idempotency_prefix: str = "runtime:send",
     ) -> None:
-        parts = [text[i:i + 3500] for i in range(0, len(text), 3500)] or ["(пустой ответ)"]
+        html = md_to_tg_html(text)
+        parts = [html[i:i + 3500] for i in range(0, len(html), 3500)] or ["(пустой ответ)"]
         first = True
         for part in parts:
             if first:
@@ -220,6 +222,7 @@ class TelethonOpenClawRuntime:
                         text=part,
                         reply_to_msg_id=first_reply_to,
                         top_msg_id=top_msg_id,
+                        parse_mode="html",
                         idempotency_key=f"{idempotency_prefix}:first:{hash(part)}",
                     )
                 )
@@ -232,6 +235,7 @@ class TelethonOpenClawRuntime:
                     text=part,
                     reply_to_msg_id=followup_reply_to,
                     top_msg_id=top_msg_id,
+                    parse_mode="html",
                     idempotency_key=f"{idempotency_prefix}:next:{hash(part)}",
                 )
             )

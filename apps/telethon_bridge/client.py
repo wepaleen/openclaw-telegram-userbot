@@ -210,10 +210,17 @@ class TelethonBridgeClient:
         command: OutboundTelegramCommand,
     ) -> Any:
         """Send a message with explicit topic context for MTProto forum threads."""
+        msg_text = command.text
+        entities = None
+        if command.parse_mode and command.parse_mode.lower() == "html":
+            msg_text, entities = await self.client._parse_message_text(
+                command.text, command.parse_mode,
+            )
         result = await self.client(
             functions.messages.SendMessageRequest(
                 peer=input_peer,
-                message=command.text,
+                message=msg_text,
+                entities=entities,
                 no_webpage=command.disable_link_preview,
                 random_id=random.randrange(1, 2**63 - 1),
                 reply_to=types.InputReplyToMessage(
