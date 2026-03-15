@@ -119,8 +119,12 @@ class TelethonOpenClawRuntime:
             stripped = text[len(trigger):].strip().lstrip(",").strip()
             return stripped or None
 
-        # 2) Reply to any message in a topic — treat as conversation continuation
-        if event.is_topic_message and event.reply_to_msg_id:
+        # 2) Explicit reply to a specific message in a topic (not just posting into the topic)
+        if (
+            event.is_topic_message
+            and event.reply_to_msg_id
+            and event.reply_to_msg_id != event.top_msg_id
+        ):
             return text
 
         return None
