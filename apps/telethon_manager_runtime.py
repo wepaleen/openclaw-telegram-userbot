@@ -84,6 +84,15 @@ class TelethonOpenClawRuntime:
             return
 
         event.text = normalized_text
+
+        # Acknowledge: react with 👀 so the user knows the bot saw the message
+        try:
+            await self.transport.send_reaction(
+                event.peer, message_id=event.message_id, emoticon="👀",
+            )
+        except Exception as e:
+            log.debug("Could not set 👀 reaction: %s", e)
+
         lock = self._locks[event.session_key]
         async with lock:
             try:
