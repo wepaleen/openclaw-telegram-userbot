@@ -340,8 +340,37 @@ class OpenClawToolExecutor:
             timezone_name=settings.bot_timezone,
         )
 
-        target_peer = event.peer
-        target_topic_id = event.top_msg_id
+        chat_query = self._as_str(args.get("chat_query"))
+        topic_query = self._as_str(args.get("topic_query"))
+
+        if chat_query or topic_query:
+            context = await self._resolve_target_context(
+                event=event,
+                chat_query=chat_query,
+                topic_query=topic_query,
+                reply_to_message_id=None,
+                prefer_current_context=True,
+            )
+            target_peer = self._dict_to_peer(context["peer"])
+            target_topic_id = context.get("top_msg_id")
+        else:
+            target_peer = event.peer
+            target_topic_id = event.top_msg_id
+
+        # Resolve mention target (who to tag when reminder fires)
+        mention_username: str | None = None
+        target_query = self._as_str(args.get("target_query"))
+        if target_query:
+            try:
+                mention_peer, _ = await self._resolve_peer_query(
+                    query=target_query, event=event,
+                )
+                mention_username = mention_peer.username
+                if not mention_username:
+                    mention_username = mention_peer.title
+            except Exception:
+                # Keep raw query as mention fallback
+                mention_username = target_query
 
         result = await create_reminder(
             text=str(args["text"]),
@@ -350,16 +379,14 @@ class OpenClawToolExecutor:
             target_topic_id=target_topic_id,
             target_user=target_peer.username if target_peer.peer_type == PeerType.USER else None,
             recurrence=self._as_str(args.get("recurrence")),
+            source_sender_username=event.sender_username,
+            mention_username=mention_username,
         )
         result["target_peer"] = _serialize_peer(target_peer)
         result["remind_at_local"] = parsed_time["remind_at_local"]
         result["timezone"] = parsed_time["timezone"]
-        if self._as_str(args.get("target_query")):
-            result["note"] = (
-                "set_reminder always delivers to the current context; "
-                "target_query was ignored. Use schedule_action for delayed delivery "
-                "to another recipient."
-            )
+        if mention_username:
+            result["mention"] = mention_username
         return result
 
     async def _list_reminders(self, args: dict[str, Any]) -> dict[str, Any]:

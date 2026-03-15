@@ -40,10 +40,19 @@ async def _tick(send_fn, execute_fn) -> None:
             str(reminder.get("text", ""))[:80],
         )
         try:
+            tags = []
+            for field in ("source_sender_username", "mention_username"):
+                raw = reminder.get(field) or ""
+                if raw:
+                    tag = raw if raw.startswith("@") else f"@{raw}"
+                    if tag not in tags:
+                        tags.append(tag)
+            tag_prefix = " ".join(tags)
+            reminder_text = f"🔔 {tag_prefix} Напоминание: {reminder['text']}" if tag_prefix else f"🔔 Напоминание: {reminder['text']}"
             await send_fn(
                 chat_id=reminder["target_chat_id"],
                 target=reminder.get("target_user"),
-                text=f"🔔 Напоминание: {reminder['text']}",
+                text=reminder_text,
                 topic_id=reminder.get("target_topic_id"),
             )
             await mark_reminder_fired(reminder["id"])
@@ -75,6 +84,8 @@ async def _tick(send_fn, execute_fn) -> None:
                         target_user=reminder.get("target_user"),
                         recurrence=recurrence,
                         task_id=reminder.get("task_id"),
+                        source_sender_username=reminder.get("source_sender_username"),
+                        mention_username=reminder.get("mention_username"),
                     )
                     log.info(
                         "Rescheduled recurring reminder %d -> %s",

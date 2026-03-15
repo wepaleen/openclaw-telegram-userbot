@@ -117,11 +117,14 @@ async def create_reminder(
     target_user: str | None = None,
     recurrence: str | None = None,
     task_id: int | None = None,
+    source_sender_username: str | None = None,
+    mention_username: str | None = None,
 ) -> dict[str, Any]:
     db = await get_db()
     cursor = await db.execute(
         "INSERT INTO reminders (text, fire_at, target_chat_id, target_topic_id, "
-        "target_user, recurrence, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "target_user, recurrence, task_id, source_sender_username, mention_username) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             text,
             fire_at,
@@ -130,6 +133,8 @@ async def create_reminder(
             target_user,
             recurrence,
             task_id,
+            source_sender_username,
+            mention_username,
         ),
     )
     await db.commit()

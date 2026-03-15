@@ -135,13 +135,16 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "set_reminder",
-                "description": "Создать одноразовое или повторяющееся напоминание в текущем чате, текущей личке или текущей теме. Для отложенной отправки другому адресату используй schedule_action.",
+                "description": "Создать напоминание. По умолчанию — в текущем контексте. С chat_query/topic_query — в другом чате/топике. С target_query — тегнуть конкретного человека при срабатывании (@username, имя). recurrence — для повторяющихся (например 'каждый день', 'every 2 hours').",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "text": {"type": "string"},
-                        "time_phrase": {"type": "string"},
-                        "recurrence": {"type": "string"},
+                        "text": {"type": "string", "description": "Текст напоминания"},
+                        "time_phrase": {"type": "string", "description": "Когда напомнить: 'через 30 мин', 'завтра в 10:00', '3 июня', '14:30'"},
+                        "chat_query": {"type": "string", "description": "Чат для доставки (название, @username, id). Если не указан — текущий чат"},
+                        "topic_query": {"type": "string", "description": "Топик форума для доставки (название или id)"},
+                        "target_query": {"type": "string", "description": "Кого тегнуть при срабатывании (@username, имя контакта)"},
+                        "recurrence": {"type": "string", "description": "Повторение: 'каждый день', 'every 2 hours', 'еженедельно'"},
                     },
                     "required": ["text", "time_phrase"],
                 },
@@ -380,13 +383,13 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "send_message",
-                "description": "Отправить сообщение в Telegram в разрешённый peer/context.",
+                "description": "Отправить сообщение в Telegram. Без параметров — в текущий чат/топик. С chat_query — в другой чат. С topic_query — в конкретный топик форума. С target_query — конкретному адресату (@username, имя контакта, user id).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "target_query": {"type": "string"},
-                        "chat_query": {"type": "string"},
-                        "topic_query": {"type": "string"},
+                        "target_query": {"type": "string", "description": "Адресат: @username, имя контакта или user id"},
+                        "chat_query": {"type": "string", "description": "Название чата для отправки в другой чат"},
+                        "topic_query": {"type": "string", "description": "Название топика форума"},
                         "text": {"type": "string"},
                         "reply_to_message_id": {"type": "integer"},
                     },

@@ -1,11 +1,14 @@
 """Service layer that binds Telethon transport to the OpenClaw runtime."""
 
-from dataclasses import asdict
+import logging
 from typing import Any
 
 from apps.openclaw_adapter.runtime import AgentRunResult, OpenClawAgentRuntime, ToolExecutor
 from apps.telethon_bridge.service import TelethonBridgeService
+from resolver.chats import get_forum_chat_ids, get_topics_for_chat
 from shared.schemas.telegram import InboundTelegramEvent, PeerRef
+
+log = logging.getLogger("openclaw_adapter.service")
 
 
 class OpenClawAdapterService:
@@ -34,13 +37,35 @@ class OpenClawAdapterService:
             reply_to_msg_id=event.reply_to_msg_id if not event.top_msg_id else None,
         )
         dialogs = await self.transport.list_dialogs(limit=self.dialogs_limit)
-        available_chats = [self._serialize_peer(peer) for peer in dialogs]
+        available_chats = await self._build_chats_with_topics(dialogs)
         return await self.runtime.run(
             event=event,
             recent_context=recent_context,
             available_chats=available_chats,
             execute_tool=self.execute_tool,
         )
+
+    async def _build_chats_with_topics(
+        self, dialogs: list[PeerRef]
+    ) -> list[dict[str, Any]]:
+        """Serialize dialogs and attach indexed topics for forum chats."""
+        forum_chat_ids = set(await get_forum_chat_ids())
+        result: list[dict[str, Any]] = []
+        for peer in dialogs:
+            entry = self._serialize_peer(peer)
+            if peer.peer_id in forum_chat_ids:
+                entry["is_forum"] = True
+                try:
+                    topics = await get_topics_for_chat(peer.peer_id)
+                    if topics:
+                        entry["topics"] = [
+                            {"title": t["title"], "topic_id": t["topic_id"]}
+                            for t in topics
+                        ]
+                except Exception as e:
+                    log.warning("Failed to load topics for chat %d: %s", peer.peer_id, e)
+            result.append(entry)
+        return result
 
     @staticmethod
     def _serialize_peer(peer: PeerRef) -> dict[str, Any]:

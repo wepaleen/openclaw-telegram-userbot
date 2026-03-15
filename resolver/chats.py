@@ -206,6 +206,16 @@ async def get_chats_summary() -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+async def get_topics_for_chat(chat_id: int) -> list[dict[str, Any]]:
+    """Return all indexed topics for a forum chat."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT topic_id, title, top_message_id FROM topic_index WHERE chat_id = ? ORDER BY title",
+        (chat_id,),
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_all_chat_ids() -> list[int]:
     db = await get_db()
     rows = await db.execute_fetchall("SELECT chat_id FROM chat_index")
