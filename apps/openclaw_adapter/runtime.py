@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from apps.openclaw_adapter.client import OpenClawChatClient
 from apps.openclaw_adapter.instructions import DEFAULT_SYSTEM_INSTRUCTIONS
+from apps.openclaw_adapter.local_commands import try_parse_local
 from apps.openclaw_adapter.tools import build_default_tool_schemas
 from config import settings
 from shared.schemas.telegram import InboundTelegramEvent, PeerRef
@@ -87,6 +88,23 @@ class OpenClawAgentRuntime:
         execute_tool: ToolExecutor,
         max_tool_rounds: int | None = None,
     ) -> AgentRunResult:
+        # ── Level 1: Local regex parser (0 tokens, free) ──
+        local_cmd = try_parse_local(event.text)
+        if local_cmd is not None:
+            log.info("Level-1 local command: %s", local_cmd.tool_name)
+            result = await execute_tool(local_cmd.tool_name, local_cmd.tool_args, event)
+            if not result.get("error"):
+                text = self._format_local_result(local_cmd.tool_name, result)
+                return AgentRunResult(
+                    text=text,
+                    messages=[],
+                    raw_response={},
+                    tool_rounds=0,
+                )
+            # If local execution failed, fall through to LLM
+            log.info("Level-1 failed (%s), falling through to LLM", result.get("error"))
+
+        # ── Level 2/3: LLM-based processing ──
         max_rounds = max_tool_rounds or settings.max_tool_calls
         user_content = self._build_user_content(event, recent_context, available_chats)
         messages: list[dict[str, Any]] = [
@@ -182,6 +200,58 @@ class OpenClawAgentRuntime:
             raw_response=response,
             tool_rounds=max_rounds,
         )
+
+    @staticmethod
+    def _format_local_result(tool_name: str, result: dict[str, Any]) -> str:
+        """Format tool result into human-readable text without using LLM."""
+        if tool_name == "set_reminder":
+            local_time = result.get("remind_at_local") or result.get("fire_at", "")
+            return f"Напоминание установлено на {local_time}."
+
+        if tool_name == "send_message":
+            peer = result.get("target_peer", {})
+            label = peer.get("title") or peer.get("username") or "чат"
+            return f"Сообщение отправлено в {label}."
+
+        if tool_name == "send_private_message":
+            peer = result.get("target_peer", {})
+            label = peer.get("title") or peer.get("username") or "пользователь"
+            return f"Сообщение отправлено {label}."
+
+        if tool_name == "list_tasks":
+            tasks = result.get("tasks", [])
+            if not tasks:
+                return "Задач нет."
+            lines = []
+            for t in tasks:
+                status = t.get("status", "open")
+                due = t.get("due_at", "")
+                line = f"• [{status}] {t.get('title', '—')}"
+                if due:
+                    line += f" (до {due})"
+                lines.append(line)
+            return "Задачи:\n" + "\n".join(lines)
+
+        if tool_name == "list_reminders":
+            by_status = result.get("reminders_by_status", {})
+            pending = by_status.get("pending", [])
+            if not pending and not by_status:
+                reminders = result.get("reminders", [])
+                if not reminders:
+                    return "Активных напоминаний нет."
+                pending = reminders
+            if not pending:
+                return "Активных напоминаний нет."
+            lines = []
+            for r in pending:
+                local_time = r.get("fire_at_local") or r.get("fire_at", "")
+                lines.append(f"• #{r.get('id', '?')} [{local_time}] {r.get('text', '—')}")
+            return "Напоминания:\n" + "\n".join(lines)
+
+        if tool_name == "cancel_reminder":
+            return f"Напоминание #{result.get('reminder_id', '?')} отменено."
+
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _looks_like_action(text: str) -> bool:
