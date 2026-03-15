@@ -139,6 +139,8 @@ class OpenClawToolExecutor:
             return await cancel_reminder(int(args["reminder_id"]))
         if name == "list_reminders":
             return await self._list_reminders(args)
+        if name == "inspect_delayed_items":
+            return await self._inspect_delayed_items(args)
         if name == "schedule_action":
             return await self._schedule_action(event, args)
         if name == "list_scheduled_actions":
@@ -362,13 +364,74 @@ class OpenClawToolExecutor:
         return result
 
     async def _list_reminders(self, args: dict[str, Any]) -> dict[str, Any]:
-        reminders = await list_reminders(
-            status=self._as_str(args.get("status")) or "pending",
-            limit=int(args.get("limit", 20)),
-        )
-        for reminder in reminders:
-            reminder["fire_at_local"] = format_local_datetime(reminder.get("fire_at"))
-        return {"reminders": reminders}
+        limit = int(args.get("limit", 20))
+        status = self._as_str(args.get("status"))
+
+        if status:
+            reminders = await list_reminders(
+                status=status,
+                limit=limit,
+            )
+            for reminder in reminders:
+                reminder["fire_at_local"] = format_local_datetime(reminder.get("fire_at"))
+            return {"status": status, "reminders": reminders}
+
+        statuses = ("pending", "fired", "cancelled")
+        reminders_by_status: dict[str, list[dict[str, Any]]] = {}
+        for item_status in statuses:
+            rows = await list_reminders(status=item_status, limit=limit)
+            for row in rows:
+                row["fire_at_local"] = format_local_datetime(row.get("fire_at"))
+            reminders_by_status[item_status] = rows
+
+        return {
+            "summary": {
+                item_status: len(reminders_by_status[item_status])
+                for item_status in statuses
+            },
+            "reminders_by_status": reminders_by_status,
+        }
+
+    async def _inspect_delayed_items(self, args: dict[str, Any]) -> dict[str, Any]:
+        limit = int(args.get("limit", 10))
+        reminder_statuses = ("pending", "fired", "cancelled")
+        scheduled_statuses = ("pending", "executed", "failed", "cancelled")
+
+        reminders_by_status: dict[str, list[dict[str, Any]]] = {}
+        for status in reminder_statuses:
+            rows = await list_reminders(status=status, limit=limit)
+            for row in rows:
+                row["fire_at_local"] = format_local_datetime(row.get("fire_at"))
+            reminders_by_status[status] = rows
+
+        actions_by_status: dict[str, list[dict[str, Any]]] = {}
+        for status in scheduled_statuses:
+            rows = await list_scheduled_actions(status=status, limit=limit)
+            for row in rows:
+                row["execute_at_local"] = format_local_datetime(row.get("execute_at"))
+            actions_by_status[status] = rows
+
+        audit_rows = await list_audit_log(limit=limit)
+        delayed_audit = [
+            row
+            for row in audit_rows
+            if str(row.get("action_type")) in {
+                "set_reminder",
+                "cancel_reminder",
+                "schedule_action",
+                "cancel_scheduled_action",
+                "deliver_reminder",
+                "list_reminders",
+                "list_scheduled_actions",
+                "inspect_delayed_items",
+            }
+        ]
+
+        return {
+            "reminders": reminders_by_status,
+            "scheduled_actions": actions_by_status,
+            "audit_log": delayed_audit[:limit],
+        }
 
     async def _list_scheduled_actions(self, args: dict[str, Any]) -> dict[str, Any]:
         actions = await list_scheduled_actions(

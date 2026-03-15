@@ -166,11 +166,24 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "list_reminders",
-                "description": "Показать активные или завершённые напоминания.",
+                "description": "Показать напоминания. Если status не передан, верни полную картину по pending, fired и cancelled.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "status": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "inspect_delayed_items",
+                "description": "Показать полную картину по отложенным сущностям: reminders, scheduled actions и последние записи доставки/исполнения в audit log.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
                         "limit": {"type": "integer"},
                     },
                 },

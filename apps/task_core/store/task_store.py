@@ -137,14 +137,19 @@ async def create_reminder(
 
 
 async def list_reminders(
-    status: str = "pending",
+    status: str | None = "pending",
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     db = await get_db()
-    rows = await db.execute_fetchall(
-        "SELECT * FROM reminders WHERE status = ? ORDER BY fire_at ASC LIMIT ?",
-        (status, limit),
-    )
+    query = "SELECT * FROM reminders WHERE 1=1"
+    params: list[Any] = []
+    normalized_status = (status or "").strip().lower()
+    if normalized_status and normalized_status != "all":
+        query += " AND status = ?"
+        params.append(normalized_status)
+    query += " ORDER BY fire_at ASC LIMIT ?"
+    params.append(limit)
+    rows = await db.execute_fetchall(query, params)
     return [dict(r) for r in rows]
 
 
