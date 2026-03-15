@@ -34,7 +34,7 @@ _ACTION_KEYWORDS = re.compile(
     r"напомни|поставь|создай|удали|отмени|запланируй|"
     r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|"
     r"send|write|forward|pin|search|read|list|get|show|remind|schedule|task|"
-    r"посмотри|проверь|узнай|спроси|скажи\s",
+    r"посмотри|проверь|узнай|спроси|(?<![а-яёА-ЯЁ])скажи\s",
     re.IGNORECASE,
 )
 
