@@ -19,7 +19,9 @@ ToolExecutor = Callable[[str, dict[str, Any], InboundTelegramEvent], Awaitable[d
 
 _ACTION_KEYWORDS = re.compile(
     r"напиши|отправь|пошли|скинь|перешли|закрепи|найди|покажи|прочитай|"
-    r"send|write|forward|pin|search|read|list|get|show|"
+    r"напомни|поставь|создай|удали|отмени|запланируй|"
+    r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|"
+    r"send|write|forward|pin|search|read|list|get|show|remind|schedule|task|"
     r"посмотри|проверь|узнай|спроси|скажи\s",
     re.IGNORECASE,
 )
@@ -46,7 +48,7 @@ def _serialize_peer(peer: PeerRef) -> dict[str, Any]:
 
 
 class OpenClawAgentRuntime:
-    """OpenClaw-backed agent runtime that relies on external typed tools."""
+    """Dual-LLM agent runtime: OpenClaw for chat, OpenRouter for tool calling."""
 
     def __init__(
         self,
@@ -55,7 +57,24 @@ class OpenClawAgentRuntime:
         system_instructions: str = DEFAULT_SYSTEM_INSTRUCTIONS,
         tools: list[dict[str, Any]] | None = None,
     ) -> None:
+        # Tool-calling client (OpenRouter/DeepSeek — paid, supports tools)
         self.client = client or OpenClawChatClient()
+        # Conversational client (OpenClaw/Codex — free, no tool support)
+        self.chat_client: OpenClawChatClient | None = None
+        if settings.openclaw_url:
+            openclaw_completions_url = settings.openclaw_url.replace(
+                "/v1/responses", "/v1/chat/completions"
+            )
+            self.chat_client = OpenClawChatClient(
+                base_url=openclaw_completions_url,
+                token=settings.openclaw_token,
+                model=settings.openclaw_model,
+            )
+            log.info(
+                "Dual-LLM mode: chat=%s, tools=%s",
+                settings.openclaw_model,
+                settings.llm_model,
+            )
         self.system_instructions = system_instructions
         self.tools = tools or build_default_tool_schemas()
 
@@ -75,13 +94,44 @@ class OpenClawAgentRuntime:
             {"role": "user", "content": user_content},
         ]
 
-        first_tool_choice = "required" if self._looks_like_action(event.text) else "auto"
-        response = await self.client.complete(
-            messages=messages,
-            tools=self.tools,
-            session_key=event.session_key,
-            tool_choice=first_tool_choice,
-        )
+        needs_tools = self._looks_like_action(event.text)
+
+        if needs_tools:
+            # Action request → use paid tool-calling LLM (OpenRouter/DeepSeek)
+            log.info("Routing to tool LLM (action detected)")
+            first_tool_choice = "required"
+            response = await self.client.complete(
+                messages=messages,
+                tools=self.tools,
+                session_key=event.session_key,
+                tool_choice=first_tool_choice,
+            )
+        elif self.chat_client:
+            # Conversational request → use free OpenClaw (no tools)
+            log.info("Routing to OpenClaw (conversation)")
+            response = await self.chat_client.complete(
+                messages=messages,
+                session_key=event.session_key,
+            )
+            # If OpenClaw returns a clean text response, return it directly
+            calls = self.client.extract_tool_calls(response)
+            if not calls:
+                return AgentRunResult(
+                    text=self.client.extract_text(response),
+                    messages=messages,
+                    raw_response=response,
+                    tool_rounds=0,
+                )
+            # Unlikely but if OpenClaw somehow returns tool calls, proceed with tool loop
+        else:
+            # No OpenClaw configured → use tool LLM for everything
+            first_tool_choice = "auto"
+            response = await self.client.complete(
+                messages=messages,
+                tools=self.tools,
+                session_key=event.session_key,
+                tool_choice=first_tool_choice,
+            )
 
         for tool_round in range(max_rounds):
             calls = self.client.extract_tool_calls(response)
@@ -97,12 +147,25 @@ class OpenClawAgentRuntime:
             messages.append(assistant_message)
 
             for call in calls:
+                log.info(
+                    "Tool call: %s(id=%s) args=%s",
+                    call.name,
+                    call.call_id,
+                    json.dumps(call.arguments, ensure_ascii=False)[:500],
+                )
                 result = await execute_tool(call.name, call.arguments, event)
+                result_str = json.dumps(result, ensure_ascii=False)
+                log.info(
+                    "Tool result: %s(id=%s) -> %s",
+                    call.name,
+                    call.call_id,
+                    result_str[:500],
+                )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.call_id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": result_str,
                     }
                 )
 

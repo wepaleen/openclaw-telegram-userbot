@@ -28,7 +28,17 @@ async def _tick(send_fn, execute_fn) -> None:
     now = datetime.now(timezone.utc).isoformat()
 
     reminders = await get_pending_reminders(now)
+    if reminders:
+        log.info("Tick: found %d pending reminders (now=%s)", len(reminders), now)
     for reminder in reminders:
+        log.info(
+            "Firing reminder %d: chat_id=%s target_user=%s topic_id=%s text=%s",
+            reminder["id"],
+            reminder.get("target_chat_id"),
+            reminder.get("target_user"),
+            reminder.get("target_topic_id"),
+            str(reminder.get("text", ""))[:80],
+        )
         try:
             await send_fn(
                 chat_id=reminder["target_chat_id"],

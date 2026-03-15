@@ -277,22 +277,45 @@ def _local_now(now: datetime | None = None) -> datetime:
 
 
 def parse_time_delta(delta_str: str) -> timedelta | None:
-    """Parse '30 мин', '2 часа', '1h', '45m' etc."""
+    """Parse '30 мин', '2 часа', '1h', '45m', 'через 5 минут', 'через минуту' etc."""
     import re
 
+    raw = re.sub(r"^(?:через|in)\s+", "", delta_str.strip(), flags=re.IGNORECASE)
+
+    # Handle "минуту", "час" without a number (means 1)
+    solo_match = re.match(
+        r"^(минуту|минутку|час|часик|hour|minute)$",
+        raw,
+        re.IGNORECASE,
+    )
+    if solo_match:
+        unit = solo_match.group(1).lower()
+        if unit in ("минуту", "минутку", "minute"):
+            return timedelta(minutes=1)
+        if unit in ("час", "часик", "hour"):
+            return timedelta(hours=1)
+
+    # Handle "полчаса" / "half hour"
+    if raw.lower() in ("полчаса", "half hour", "half an hour"):
+        return timedelta(minutes=30)
+
     match = re.match(
-        r"(\d+)\s*(мин|минут|м|min|minutes?|m|час|часов|часа|ч|hour|hours?|h)",
-        delta_str.strip(),
+        r"(\d+)\s*(мин|минут|минуты|м|min|minutes?|m|час|часов|часа|ч|hour|hours?|h|сек|секунд|секунды|sec|seconds?|s|дн|дней|день|дня|day|days?|d)",
+        raw,
         re.IGNORECASE,
     )
     if not match:
         return None
     value = int(match.group(1))
     unit = match.group(2).lower()
-    if unit in ("мин", "минут", "м", "min", "minute", "minutes", "m"):
+    if unit in ("мин", "минут", "минуты", "м", "min", "minute", "minutes", "m"):
         return timedelta(minutes=value)
     if unit in ("час", "часов", "часа", "ч", "hour", "hours", "h"):
         return timedelta(hours=value)
+    if unit in ("сек", "секунд", "секунды", "sec", "second", "seconds", "s"):
+        return timedelta(seconds=value)
+    if unit in ("дн", "дней", "день", "дня", "day", "days", "d"):
+        return timedelta(days=value)
     return None
 
 
@@ -376,6 +399,16 @@ def parse_datetime_input(value: str | None, now: datetime | None = None) -> str 
     delta = parse_time_delta(raw)
     if delta:
         return _to_utc_iso(local_now + delta)
+
+    # Strip "в " prefix for time-of-day parsing ("в 18:42" -> "18:42")
+    time_raw = re.sub(r"^в\s+", "", raw, flags=re.IGNORECASE)
+
+    hm_direct = parse_time_of_day(time_raw)
+    if hm_direct:
+        target = local_now.replace(hour=hm_direct[0], minute=hm_direct[1], second=0, microsecond=0)
+        if target <= local_now:
+            target += timedelta(days=1)
+        return _to_utc_iso(target)
 
     today_match = re.match(
         r"^(?:сегодня|today)(?:\s+в)?\s*(\d{1,2}[:.]\d{2})?$",

@@ -50,10 +50,15 @@ class Settings:
     telethon_lang_code: str = os.getenv("TELETHON_LANG_CODE", "ru")
     telethon_system_lang_code: str = os.getenv("TELETHON_SYSTEM_LANG_CODE", "ru-RU")
 
-    # OpenClaw
-    openclaw_url: str = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1/responses")
-    openclaw_token: str = os.environ.get("OPENCLAW_TOKEN", "")
-    openclaw_agent_id: str = os.getenv("OPENCLAW_AGENT_ID", "main")
+    # LLM API — tool-calling model (OpenRouter, DeepSeek, OpenAI, Groq)
+    llm_base_url: str = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+    llm_api_key: str = os.getenv("LLM_API_KEY", "")
+    llm_model: str = os.getenv("LLM_MODEL", "deepseek/deepseek-chat-v3-0324")
+
+    # OpenClaw — free conversational model (no tool calling)
+    openclaw_url: str = os.getenv("OPENCLAW_URL", "")
+    openclaw_token: str = os.getenv("OPENCLAW_TOKEN", "")
+    openclaw_model: str = os.getenv("OPENCLAW_MODEL", "openclaw:main")
 
     # Bot behavior
     group_trigger: str = os.getenv("GROUP_TRIGGER", "!ai")
@@ -77,7 +82,7 @@ class Settings:
     # Derived
     @property
     def chat_completions_url(self) -> str:
-        return self.openclaw_url.replace("/v1/responses", "/v1/chat/completions")
+        return self.llm_base_url
 
     @property
     def tzinfo(self) -> ZoneInfo:

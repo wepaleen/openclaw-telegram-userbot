@@ -33,8 +33,8 @@ class OpenClawChatClient:
         timeout_seconds: int = 120,
     ) -> None:
         self.base_url = base_url or settings.chat_completions_url
-        self.token = token or settings.openclaw_token
-        self.model = model or f"openclaw:{settings.openclaw_agent_id}"
+        self.token = token or settings.llm_api_key
+        self.model = model or settings.llm_model
         self.timeout_seconds = timeout_seconds
 
     async def complete(
@@ -50,8 +50,6 @@ class OpenClawChatClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
-        if session_key:
-            headers["x-openclaw-session-key"] = session_key
 
         payload: dict[str, Any] = {
             "model": self.model,
@@ -72,7 +70,29 @@ class OpenClawChatClient:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(self.base_url, headers=headers, json=payload)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+            # Log response details for debugging
+            choices = data.get("choices", [])
+            if choices:
+                msg = choices[0].get("message", {})
+                finish = choices[0].get("finish_reason")
+                tool_calls = msg.get("tool_calls", [])
+                content_preview = (msg.get("content") or "")[:200]
+                if tool_calls:
+                    names = [tc.get("function", {}).get("name") for tc in tool_calls]
+                    log.info(
+                        "OpenClaw response — finish=%s, tool_calls=%s",
+                        finish,
+                        names,
+                    )
+                else:
+                    log.info(
+                        "OpenClaw response — finish=%s, NO tool_calls, content=%s",
+                        finish,
+                        content_preview,
+                    )
+            return data
 
     @staticmethod
     def extract_tool_calls(response: dict[str, Any]) -> list[OpenClawToolCall]:
