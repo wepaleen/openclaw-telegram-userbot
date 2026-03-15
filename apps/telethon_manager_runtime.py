@@ -115,14 +115,14 @@ class TelethonOpenClawRuntime:
                     event,
                     f"OpenClaw вернул HTTP {e.response.status_code if e.response else '?'}:\n{body}",
                 )
-                reaction = "🤕"
+                reaction = "💔"
             except Exception as e:
                 log.exception("Runtime failed for event %s", event.event_id)
                 await self._reply_text(
                     event,
                     f"Ошибка runtime: {type(e).__name__}: {e}",
                 )
-                reaction = "🤕"
+                reaction = "💔"
 
         # Replace 👀 with context-aware reaction after response
         if reaction:
@@ -162,13 +162,16 @@ class TelethonOpenClawRuntime:
 
     @staticmethod
     def _pick_reaction(user_text: str, bot_reply: str, tool_rounds: int) -> str:
-        """Choose a context-aware reaction emoji based on input/output."""
+        """Choose a context-aware reaction emoji based on input/output.
+
+        Only uses emojis from the Telegram allowed reactions set.
+        """
         low_user = user_text.lower()
         low_reply = bot_reply.lower()
 
         # Greetings
         if any(w in low_user for w in ("привет", "здравств", "добр", "hello", "hi ", "хай")):
-            return "👋"
+            return "🤝"
 
         # Thanks
         if any(w in low_user for w in ("спасибо", "благодар", "thanks", "thx")):
@@ -179,7 +182,7 @@ class TelethonOpenClawRuntime:
             "напоминание установлено", "задача создана", "напоминание отменено",
             "задача выполнена", "сообщение отправлено", "удален",
         )):
-            return "✅"
+            return "🔥"
 
         # Used tools (action performed)
         if tool_rounds > 0:
