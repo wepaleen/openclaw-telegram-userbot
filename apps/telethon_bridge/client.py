@@ -74,6 +74,9 @@ class TelethonBridgeClient:
             raise SessionNotAuthorizedError(
                 "Telethon session is not authorized. Login the account first."
             )
+        me = await self.client.get_me()
+        self.self_id: int = me.id
+        log.info("Logged in as user_id=%d", self.self_id)
 
     async def disconnect(self) -> None:
         if self.client.is_connected():

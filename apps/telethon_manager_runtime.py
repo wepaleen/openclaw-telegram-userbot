@@ -106,12 +106,20 @@ class TelethonOpenClawRuntime:
         if not text:
             return None
 
+        # DMs — always respond
         if event.peer.peer_type == PeerType.USER:
             return text
 
-        if text.startswith(settings.group_trigger):
-            stripped = text[len(settings.group_trigger):].strip()
+        # Groups / supergroups / forum topics:
+        # 1) Trigger name (case-insensitive) — strip it from text
+        trigger = settings.group_trigger
+        if text.lower().startswith(trigger.lower()):
+            stripped = text[len(trigger):].strip().lstrip(",").strip()
             return stripped or None
+
+        # 2) Reply to any message in a topic — treat as conversation continuation
+        if event.is_topic_message and event.reply_to_msg_id:
+            return text
 
         return None
 
