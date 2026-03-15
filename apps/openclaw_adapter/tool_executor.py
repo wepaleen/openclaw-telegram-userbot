@@ -21,7 +21,7 @@ from apps.task_core.store.task_store import (
     parse_datetime_input,
     update_task,
 )
-from apps.task_core.audit import Timer, log_action
+from apps.task_core.audit import Timer, list_audit_log, log_action
 from apps.telethon_bridge.service import TelethonBridgeService
 from config import normalize_chat_id, settings
 from resolver.chats import search_chats, search_topics
@@ -143,6 +143,8 @@ class OpenClawToolExecutor:
             return await self._schedule_action(event, args)
         if name == "list_scheduled_actions":
             return await self._list_scheduled_actions(args)
+        if name == "list_audit_log":
+            return await self._list_audit_log(args)
         if name == "cancel_scheduled_action":
             return await cancel_scheduled_action(int(args["scheduled_id"]))
         if name == "list_overdue_tasks":
@@ -376,6 +378,14 @@ class OpenClawToolExecutor:
         for action in actions:
             action["execute_at_local"] = format_local_datetime(action.get("execute_at"))
         return {"scheduled_actions": actions}
+
+    async def _list_audit_log(self, args: dict[str, Any]) -> dict[str, Any]:
+        rows = await list_audit_log(
+            action_type=self._as_str(args.get("action_type")),
+            success=args.get("success") if "success" in args else None,
+            limit=int(args.get("limit", 20)),
+        )
+        return {"audit_log": rows}
 
     async def _schedule_action(
         self,

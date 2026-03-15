@@ -54,6 +54,28 @@ async def log_action(
         log.error("Failed to write audit log: %s", e)
 
 
+async def list_audit_log(
+    *,
+    action_type: str | None = None,
+    success: bool | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Return recent audit records with optional filters."""
+    db = await get_db()
+    query = "SELECT * FROM audit_log WHERE 1=1"
+    params: list[object] = []
+    if action_type:
+        query += " AND action_type = ?"
+        params.append(action_type)
+    if success is not None:
+        query += " AND success = ?"
+        params.append(1 if success else 0)
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    rows = await db.execute_fetchall(query, params)
+    return [dict(row) for row in rows]
+
+
 class Timer:
     """Simple context manager to measure elapsed time in ms."""
 

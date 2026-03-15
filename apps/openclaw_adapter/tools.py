@@ -213,6 +213,21 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "list_audit_log",
+                "description": "Показать последние записи audit log, чтобы проверить, что реально было выполнено системой.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_type": {"type": "string"},
+                        "success": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "cancel_scheduled_action",
                 "description": "Отменить отложенное действие по id.",
                 "parameters": {
