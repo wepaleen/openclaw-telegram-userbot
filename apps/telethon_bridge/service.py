@@ -144,8 +144,9 @@ class TelethonBridgeService:
         *,
         message_id: int,
         text: str,
+        parse_mode: str | None = None,
     ) -> dict:
-        return await self.client.edit_message(peer, message_id=message_id, text=text)
+        return await self.client.edit_message(peer, message_id=message_id, text=text, parse_mode=parse_mode)
 
     async def delete_messages(
         self,

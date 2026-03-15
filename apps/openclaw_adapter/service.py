@@ -1,6 +1,7 @@
 """Service layer that binds Telethon transport to the OpenClaw runtime."""
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from apps.openclaw_adapter.runtime import AgentRunResult, OpenClawAgentRuntime, ToolExecutor
@@ -44,6 +45,30 @@ class OpenClawAdapterService:
             available_chats=available_chats,
             execute_tool=self.execute_tool,
         )
+
+    def can_stream(self, event: InboundTelegramEvent) -> bool:
+        """Check if this event can use streaming (conversational, no tools needed)."""
+        return self.runtime.chat_client is not None and not self.runtime._looks_like_action(event.text)
+
+    async def stream_event(self, event: InboundTelegramEvent) -> AsyncIterator[str]:
+        """Stream conversational response chunks for an event.
+
+        Yields text deltas. Caller is responsible for assembling and sending them.
+        """
+        recent_context = await self.transport.get_recent_context(
+            peer=event.peer,
+            limit=self.context_limit,
+            top_msg_id=event.top_msg_id,
+            reply_to_msg_id=event.reply_to_msg_id if not event.top_msg_id else None,
+        )
+        dialogs = await self.transport.list_dialogs(limit=self.dialogs_limit)
+        available_chats = await self._build_chats_with_topics(dialogs)
+        async for chunk in self.runtime.stream(
+            event=event,
+            recent_context=recent_context,
+            available_chats=available_chats,
+        ):
+            yield chunk
 
     async def _build_chats_with_topics(
         self, dialogs: list[PeerRef]

@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections.abc import AsyncIterator
 from typing import Any, Awaitable, Callable
 
 from apps.openclaw_adapter.client import OpenClawChatClient
@@ -32,7 +33,7 @@ ToolExecutor = Callable[[str, dict[str, Any], InboundTelegramEvent], Awaitable[d
 _ACTION_KEYWORDS = re.compile(
     r"напиши|отправь|пошли|скинь|перешли|закрепи|найди|покажи|прочитай|"
     r"напомни|поставь|создай|удали|отмени|запланируй|"
-    r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|"
+    r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|таблиц[аеуыёй]|spreadsheet|"
     r"send|write|forward|pin|search|read|list|get|show|remind|schedule|task|"
     r"посмотри|проверь|узнай|спроси|(?<![а-яёА-ЯЁ])скажи\s",
     re.IGNORECASE,
@@ -328,6 +329,52 @@ class OpenClawAgentRuntime:
             raw_response=response,
             tool_rounds=max_rounds,
         )
+
+    async def stream(
+        self,
+        *,
+        event: InboundTelegramEvent,
+        recent_context: list[dict[str, Any]],
+        available_chats: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        """Stream conversational response (no tools). Yields text deltas."""
+        if not self.chat_client:
+            raise RuntimeError("stream requires a chat_client (OpenClaw)")
+
+        user_content = self._build_user_content(event, recent_context, available_chats)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.system_instructions},
+        ]
+
+        # Load cached session history
+        try:
+            cached = await load_session(event.session_key)
+            if cached:
+                history = self._filter_history_for_chat(
+                    [m for m in cached if m.get("role") != "system"]
+                )
+                messages.extend(history)
+        except Exception as e:
+            log.warning("Failed to load session cache for stream: %s", e)
+
+        messages.append({"role": "user", "content": user_content})
+
+        full_text = ""
+        async for chunk in self.chat_client.stream_complete(
+            messages=messages,
+            session_key=event.session_key,
+        ):
+            full_text += chunk
+            yield chunk
+
+        # Save session with final assistant message
+        if full_text.strip():
+            all_messages = list(messages)
+            all_messages.append({"role": "assistant", "content": full_text})
+            try:
+                await save_session(event.session_key, all_messages)
+            except Exception as e:
+                log.warning("Failed to save session cache after stream: %s", e)
 
     @staticmethod
     async def _save_session(

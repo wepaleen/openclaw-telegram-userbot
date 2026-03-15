@@ -461,4 +461,35 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_spreadsheet",
+                "description": "Прочитать данные из Google Таблицы. spreadsheet — URL или ID таблицы. sheet_name — название листа (по умолчанию первый). range — диапазон A1-нотации (например 'A1:D10').",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet": {"type": "string", "description": "URL или ID Google Таблицы"},
+                        "sheet_name": {"type": "string", "description": "Название листа/вкладки. Если не указано — первый лист"},
+                        "range": {"type": "string", "description": "Диапазон в A1-нотации, например 'A1:D10'. Если не указан — вся таблица"},
+                        "limit": {"type": "integer", "description": "Макс. строк для возврата (по умолчанию 100)"},
+                    },
+                    "required": ["spreadsheet"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_sheets",
+                "description": "Показать все листы/вкладки в Google Таблице.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "spreadsheet": {"type": "string", "description": "URL или ID Google Таблицы"},
+                    },
+                    "required": ["spreadsheet"],
+                },
+            },
+        },
     ]

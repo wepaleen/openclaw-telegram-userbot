@@ -1,4 +1,6 @@
 aiosqlite
+gspread
+google-auth
 httpx
 pyrogram
 python-dotenv

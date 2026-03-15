@@ -55,6 +55,8 @@ _USER_TOOLS = {
     "send_private_message",
     "forward_message",
     "send_reaction",
+    "read_spreadsheet",
+    "list_sheets",
 }
 
 # Additional tools for admins only

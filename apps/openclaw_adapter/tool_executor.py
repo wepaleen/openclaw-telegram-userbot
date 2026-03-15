@@ -21,6 +21,7 @@ from apps.task_core.store.task_store import (
     parse_datetime_input,
     update_task,
 )
+from apps.google_sheets.client import list_sheets as gs_list_sheets, read_spreadsheet as gs_read_spreadsheet
 from apps.task_core.audit import Timer, list_audit_log, log_action
 from apps.telethon_bridge.service import TelethonBridgeService
 from config import normalize_chat_id, settings
@@ -173,6 +174,10 @@ class OpenClawToolExecutor:
             return await self._delete_message(event, args)
         if name == "send_reaction":
             return await self._send_reaction(event, args)
+        if name == "read_spreadsheet":
+            return self._read_spreadsheet(args)
+        if name == "list_sheets":
+            return self._list_sheets(args)
         return {"error": f"unknown tool: {name}"}
 
     async def _list_available_chats(self, limit: int) -> dict[str, Any]:
@@ -869,6 +874,23 @@ class OpenClawToolExecutor:
         else:
             peer = event.peer
         return await self.transport.send_reaction(peer, message_id=message_id, emoticon=emoticon)
+
+    @staticmethod
+    def _read_spreadsheet(args: dict[str, Any]) -> dict[str, Any]:
+        spreadsheet = str(args["spreadsheet"])
+        sheet_name = args.get("sheet_name")
+        range_a1 = args.get("range")
+        limit = int(args.get("limit", 100))
+        return gs_read_spreadsheet(
+            spreadsheet,
+            sheet_name=sheet_name,
+            range_a1=range_a1,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _list_sheets(args: dict[str, Any]) -> dict[str, Any]:
+        return gs_list_sheets(str(args["spreadsheet"]))
 
     async def _send_private_message(
         self,

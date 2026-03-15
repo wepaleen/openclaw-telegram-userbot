@@ -440,6 +440,7 @@ class TelethonBridgeClient:
         *,
         message_id: int,
         text: str,
+        parse_mode: str | None = None,
     ) -> dict[str, Any]:
         """Edit the text of an existing message."""
         input_peer = await self.resolve_input_peer(peer)
@@ -448,6 +449,7 @@ class TelethonBridgeClient:
             entity=input_peer,
             message=int(message_id),
             text=text,
+            parse_mode=parse_mode,
         )
         serialized = serialize_message(message, chat_entity=entity)
         serialized["edited"] = True

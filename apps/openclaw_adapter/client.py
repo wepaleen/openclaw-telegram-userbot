@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -93,6 +94,51 @@ class OpenClawChatClient:
                         content_preview,
                     )
             return data
+
+    async def stream_complete(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        session_key: str = "",
+        max_tokens: int = 2048,
+    ) -> AsyncIterator[str]:
+        """Streaming chat completion — yields text chunks as they arrive.
+
+        Only for conversational (no tools) requests.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        log.info(
+            "OpenClaw stream request — session=%s, messages=%d",
+            session_key, len(messages),
+        )
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "POST", self.base_url, headers=headers, json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        text = delta.get("content")
+                        if text:
+                            yield text
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        continue
 
     @staticmethod
     def extract_tool_calls(response: dict[str, Any]) -> list[OpenClawToolCall]:
