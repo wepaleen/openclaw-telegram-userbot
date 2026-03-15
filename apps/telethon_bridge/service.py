@@ -1,0 +1,81 @@
+"""Service wrapper around the Telethon transport client."""
+
+from apps.telethon_bridge.client import InboundHandler, TelethonBridgeClient
+from shared.schemas.telegram import InboundTelegramEvent, OutboundTelegramCommand, PeerRef
+
+
+class TelethonBridgeService:
+    """High-level service facade for the future OpenClaw adapter."""
+
+    def __init__(self, client: TelethonBridgeClient | None = None) -> None:
+        self.client = client or TelethonBridgeClient()
+        self._handlers: list[InboundHandler] = []
+        self.client.add_inbound_handler(self._dispatch)
+
+    def on_event(self, handler: InboundHandler) -> None:
+        """Register a normalized inbound event handler."""
+        self._handlers.append(handler)
+
+    async def start(self) -> None:
+        await self.client.connect()
+
+    async def stop(self) -> None:
+        await self.client.disconnect()
+
+    async def run_forever(self) -> None:
+        await self.client.run_forever()
+
+    async def send(self, command: OutboundTelegramCommand) -> dict:
+        return await self.client.send_command(command)
+
+    async def list_dialogs(self, limit: int = 100) -> list[PeerRef]:
+        return await self.client.list_dialogs(limit=limit)
+
+    async def list_dialog_rows(self, limit: int = 100) -> list[dict]:
+        return await self.client.list_dialog_rows(limit=limit)
+
+    async def resolve_peer_ref(self, peer: PeerRef | str | int) -> PeerRef:
+        return await self.client.resolve_peer_ref(peer)
+
+    async def list_forum_topics(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        limit: int = 50,
+        query: str = "",
+    ) -> dict:
+        return await self.client.list_forum_topics(peer, limit=limit, query=query)
+
+    async def search_messages(
+        self,
+        peer: PeerRef | str | int,
+        query: str,
+        *,
+        limit: int = 20,
+        from_peer: PeerRef | str | int | None = None,
+    ) -> list[dict]:
+        return await self.client.search_messages(
+            peer=peer,
+            query=query,
+            limit=limit,
+            from_peer=from_peer,
+        )
+
+    async def get_recent_context(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        limit: int = 30,
+        top_msg_id: int | None = None,
+        reply_to_msg_id: int | None = None,
+    ) -> list[dict]:
+        return await self.client.get_recent_context(
+            peer=peer,
+            limit=limit,
+            top_msg_id=top_msg_id,
+            reply_to_msg_id=reply_to_msg_id,
+        )
+
+    async def _dispatch(self, event: InboundTelegramEvent) -> None:
+        for handler in list(self._handlers):
+            await handler(event)

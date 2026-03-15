@@ -1,0 +1,5 @@
+aiosqlite
+httpx
+pyrogram
+python-dotenv
+telethon

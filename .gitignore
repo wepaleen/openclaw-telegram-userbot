@@ -1,0 +1,33 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local helper scripts / machine-specific files
+install
+
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Telegram session files
+*.session
+*.session-journal
+
+# Local databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# OS/editor noise
+.DS_Store
