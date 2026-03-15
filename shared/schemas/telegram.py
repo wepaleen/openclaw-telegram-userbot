@@ -35,6 +35,7 @@ class InboundTelegramEvent:
     text: str
     date_utc: datetime
     reply_to_msg_id: int | None = None
+    reply_to_sender_id: int | None = None
     top_msg_id: int | None = None
     is_topic_message: bool = False
     raw_context_ref: str | None = None

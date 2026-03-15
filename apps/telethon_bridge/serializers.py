@@ -131,6 +131,17 @@ async def normalize_new_message_event(
             sender = None
 
     reply_to_msg_id, top_msg_id, is_topic_message = _reply_metadata(event.message)
+
+    # Resolve the sender of the replied-to message (needed to know if reply targets the bot)
+    reply_to_sender_id: int | None = None
+    if reply_to_msg_id and reply_to_msg_id != top_msg_id:
+        try:
+            reply_msg = await event.message.get_reply_message()
+            if reply_msg is not None:
+                reply_to_sender_id = getattr(reply_msg, "sender_id", None)
+        except Exception:
+            pass
+
     return InboundTelegramEvent(
         event_id=f"{account_id}:{getattr(chat, 'id', 'unknown')}:{event.message.id}",
         account_id=account_id,
@@ -145,6 +156,7 @@ async def normalize_new_message_event(
         text=(event.raw_text or "").strip(),
         date_utc=event.message.date,
         reply_to_msg_id=reply_to_msg_id,
+        reply_to_sender_id=reply_to_sender_id,
         top_msg_id=top_msg_id,
         is_topic_message=is_topic_message,
         raw_context_ref=str(getattr(event, "chat_id", "")),

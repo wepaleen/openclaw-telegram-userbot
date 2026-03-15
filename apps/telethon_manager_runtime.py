@@ -119,11 +119,12 @@ class TelethonOpenClawRuntime:
             stripped = text[len(trigger):].strip().lstrip(",").strip()
             return stripped or None
 
-        # 2) Explicit reply to a specific message in a topic (not just posting into the topic)
+        # 2) Explicit reply to a bot's own message in a topic
         if (
             event.is_topic_message
             and event.reply_to_msg_id
             and event.reply_to_msg_id != event.top_msg_id
+            and event.reply_to_sender_id == self.transport.client.self_id
         ):
             return text
 
