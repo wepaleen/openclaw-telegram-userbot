@@ -436,13 +436,10 @@ class TelethonBridgeClient:
         if not getattr(entity, "forum", False):
             raise PeerResolutionError(f'chat "{getattr(entity, "title", entity.id)}" is not a forum')
 
-        access_hash = getattr(entity, "access_hash", None)
-        if access_hash is None:
-            raise PeerResolutionError("forum chat has no access_hash for MTProto channel request")
-
+        input_peer = await self.client.get_input_entity(entity)
         result = await self.client(
-            functions.channels.GetForumTopicsRequest(
-                channel=types.InputChannel(channel_id=int(entity.id), access_hash=access_hash),
+            functions.messages.GetForumTopicsRequest(
+                peer=input_peer,
                 offset_date=datetime.fromtimestamp(0, tz=timezone.utc),
                 offset_id=0,
                 offset_topic=0,
