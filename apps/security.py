@@ -54,6 +54,7 @@ _USER_TOOLS = {
     "send_message",
     "send_private_message",
     "forward_message",
+    "send_reaction",
 }
 
 # Additional tools for admins only
@@ -64,6 +65,8 @@ _ADMIN_ONLY_TOOLS = {
     "inspect_delayed_items",
     "list_audit_log",
     "pin_message",
+    "edit_message",
+    "delete_message",
     "list_chat_members",
     "list_topic_participants",
 }

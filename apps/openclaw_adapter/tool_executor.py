@@ -167,6 +167,12 @@ class OpenClawToolExecutor:
             return await self._send_private_message(event, args)
         if name == "send_message":
             return await self._send_message(event, args)
+        if name == "edit_message":
+            return await self._edit_message(event, args)
+        if name == "delete_message":
+            return await self._delete_message(event, args)
+        if name == "send_reaction":
+            return await self._send_reaction(event, args)
         return {"error": f"unknown tool: {name}"}
 
     async def _list_available_chats(self, limit: int) -> dict[str, Any]:
@@ -812,6 +818,57 @@ class OpenClawToolExecutor:
         result["target_peer"] = _serialize_peer(target_peer)
         result["source"] = source
         return result
+
+    async def _edit_message(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        message_id = int(args["message_id"])
+        text = str(args["text"])
+        chat_query = self._as_str(args.get("chat_query"))
+        if chat_query:
+            peer, _ = await self._resolve_chat_peer(chat_query)
+        else:
+            peer = event.peer
+        return await self.transport.edit_message(peer, message_id=message_id, text=text)
+
+    async def _delete_message(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_ids = args.get("message_ids", [])
+        if isinstance(raw_ids, int):
+            raw_ids = [raw_ids]
+        message_ids = [int(mid) for mid in raw_ids]
+        if not message_ids:
+            raise ToolExecutionError("message_ids не может быть пустым")
+        chat_query = self._as_str(args.get("chat_query"))
+        if chat_query:
+            peer, _ = await self._resolve_chat_peer(chat_query)
+        else:
+            peer = event.peer
+        revoke = bool(args.get("revoke", True))
+        return await self.transport.delete_messages(peer, message_ids=message_ids, revoke=revoke)
+
+    async def _send_reaction(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        message_id = self._as_int(args.get("message_id"))
+        if message_id is None:
+            message_id = event.reply_to_msg_id or event.message_id
+        if not message_id:
+            raise ToolExecutionError("не указан message_id и нет reply контекста")
+        emoticon = str(args.get("emoticon", "👍"))
+        chat_query = self._as_str(args.get("chat_query"))
+        if chat_query:
+            peer, _ = await self._resolve_chat_peer(chat_query)
+        else:
+            peer = event.peer
+        return await self.transport.send_reaction(peer, message_id=message_id, emoticon=emoticon)
 
     async def _send_private_message(
         self,

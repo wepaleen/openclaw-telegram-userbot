@@ -138,6 +138,33 @@ class TelethonBridgeService:
             notify=notify,
         )
 
+    async def edit_message(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        text: str,
+    ) -> dict:
+        return await self.client.edit_message(peer, message_id=message_id, text=text)
+
+    async def delete_messages(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_ids: list[int],
+        revoke: bool = True,
+    ) -> dict:
+        return await self.client.delete_messages(peer, message_ids=message_ids, revoke=revoke)
+
+    async def send_reaction(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        emoticon: str = "👍",
+    ) -> dict:
+        return await self.client.send_reaction(peer, message_id=message_id, emoticon=emoticon)
+
     async def _dispatch(self, event: InboundTelegramEvent) -> None:
         for handler in list(self._handlers):
             await handler(event)

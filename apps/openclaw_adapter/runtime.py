@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from apps.openclaw_adapter.client import OpenClawChatClient
+from apps.task_core.store.session_cache import load_session, save_session
 from apps.openclaw_adapter.instructions import DEFAULT_SYSTEM_INSTRUCTIONS
 from apps.openclaw_adapter.local_commands import try_parse_local
 from apps.openclaw_adapter.tools import build_default_tool_schemas
@@ -174,8 +175,20 @@ class OpenClawAgentRuntime:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
         ]
+
+        # Inject cached session history (prior assistant/tool rounds)
+        try:
+            cached = await load_session(event.session_key)
+            if cached:
+                # Only keep non-system messages from cache
+                history = [m for m in cached if m.get("role") != "system"]
+                messages.extend(history)
+                log.info("Loaded %d cached messages for session %s", len(history), event.session_key)
+        except Exception as e:
+            log.warning("Failed to load session cache: %s", e)
+
+        messages.append({"role": "user", "content": user_content})
 
         # Filter tools based on user role
         role_tools = filter_tool_schemas(self.tools, user_role)
@@ -201,6 +214,7 @@ class OpenClawAgentRuntime:
             # If OpenClaw returns a clean text response, return it directly
             calls = self.client.extract_tool_calls(response)
             if not calls:
+                await self._save_session(event.session_key, messages, response)
                 return AgentRunResult(
                     text=self.client.extract_text(response),
                     messages=messages,
@@ -243,6 +257,7 @@ class OpenClawAgentRuntime:
                     )
                     log.info("Emergency fallback send_message result: %s", escalation_result)
 
+                await self._save_session(event.session_key, messages, response)
                 return AgentRunResult(
                     text=llm_text,
                     messages=messages,
@@ -302,12 +317,30 @@ class OpenClawAgentRuntime:
                 tool_choice="auto",
             )
 
+        await self._save_session(event.session_key, messages, response)
         return AgentRunResult(
             text="Остановлено: слишком много циклов tools.",
             messages=messages,
             raw_response=response,
             tool_rounds=max_rounds,
         )
+
+    @staticmethod
+    async def _save_session(
+        session_key: str,
+        messages: list[dict[str, Any]],
+        response: dict[str, Any],
+    ) -> None:
+        """Save conversation state to persistent cache."""
+        try:
+            # Append final assistant message if present
+            final_msg = response.get("choices", [{}])[0].get("message")
+            all_messages = list(messages)
+            if final_msg:
+                all_messages.append(final_msg)
+            await save_session(session_key, all_messages)
+        except Exception as e:
+            log.warning("Failed to save session cache for %s: %s", session_key, e)
 
     @staticmethod
     def _format_local_result(tool_name: str, result: dict[str, Any]) -> str:

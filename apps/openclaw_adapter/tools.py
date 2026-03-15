@@ -400,6 +400,57 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "edit_message",
+                "description": "Редактировать текст существующего сообщения. message_id обязателен. Если chat_query не указан — текущий чат.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "integer", "description": "ID сообщения для редактирования"},
+                        "text": {"type": "string", "description": "Новый текст сообщения"},
+                        "chat_query": {"type": "string", "description": "Чат (название, @username, id). Если не указан — текущий"},
+                    },
+                    "required": ["message_id", "text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_message",
+                "description": "Удалить одно или несколько сообщений. message_ids — список ID. revoke=true удалит для всех.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Список ID сообщений для удаления",
+                        },
+                        "chat_query": {"type": "string", "description": "Чат (название, @username, id). Если не указан — текущий"},
+                        "revoke": {"type": "boolean", "description": "Удалить для всех (true) или только для себя (false). По умолчанию true"},
+                    },
+                    "required": ["message_ids"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "send_reaction",
+                "description": "Поставить реакцию-эмодзи на сообщение. Без message_id — на сообщение, на которое ответили. emoticon по умолчанию 👍.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "integer", "description": "ID сообщения. Если не указан — reply_to из текущего контекста"},
+                        "emoticon": {"type": "string", "description": "Эмодзи реакции: 👍, ❤️, 🔥, 👀, 😂, 😢, 🤔 и т.д."},
+                        "chat_query": {"type": "string", "description": "Чат (название, @username, id). Если не указан — текущий"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "list_available_chats",
                 "description": "Показать доступные Telegram-диалоги и чаты для текущего userbot аккаунта.",
                 "parameters": {

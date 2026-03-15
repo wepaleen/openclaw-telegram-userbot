@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from apps.task_core.store.session_cache import clear_old_sessions
 from apps.task_core.store.task_store import (
     compute_next_recurrence_fire_at,
     create_reminder,
@@ -152,27 +153,58 @@ async def _tick(send_fn, execute_fn) -> None:
             log.error("Failed scheduled action %d: %s", action["id"], e)
 
 
-async def _loop(send_fn, execute_fn, interval: int = 30) -> None:
+async def _loop(
+    send_fn,
+    execute_fn,
+    interval: int = 30,
+    sync_fn=None,
+    sync_every: int = 120,
+) -> None:
     """Main scheduler loop. Runs every `interval` seconds."""
     global _running
     _running = True
-    log.info("Scheduler started (interval=%ds)", interval)
+    tick_count = 0
+    log.info("Scheduler started (interval=%ds, sync_every=%d ticks)", interval, sync_every)
 
     while _running:
         try:
             await _tick(send_fn, execute_fn)
         except Exception as e:
             log.error("Scheduler tick error: %s", e)
+
+        tick_count += 1
+        if tick_count % sync_every == 0:
+            if sync_fn:
+                try:
+                    await sync_fn()
+                    log.info("Periodic index sync completed (tick %d)", tick_count)
+                except Exception as e:
+                    log.warning("Periodic index sync failed: %s", e)
+            try:
+                deleted = await clear_old_sessions(max_age_hours=24)
+                if deleted:
+                    log.info("Cleared %d stale session caches", deleted)
+            except Exception as e:
+                log.warning("Session cache cleanup failed: %s", e)
+
         await asyncio.sleep(interval)
 
 
-def start_scheduler(send_fn, execute_fn, interval: int = 30) -> None:
+def start_scheduler(
+    send_fn,
+    execute_fn,
+    interval: int = 30,
+    sync_fn=None,
+    sync_every: int = 120,
+) -> None:
     """Start the scheduler as a background asyncio task."""
     global _task
     if _task and not _task.done():
         log.warning("Scheduler already running")
         return
-    _task = asyncio.get_event_loop().create_task(_loop(send_fn, execute_fn, interval))
+    _task = asyncio.get_event_loop().create_task(
+        _loop(send_fn, execute_fn, interval, sync_fn=sync_fn, sync_every=sync_every)
+    )
 
 
 def stop_scheduler() -> None:

@@ -427,6 +427,59 @@ class TelethonBridgeClient:
             "notify": notify,
         }
 
+    async def edit_message(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        text: str,
+    ) -> dict[str, Any]:
+        """Edit the text of an existing message."""
+        input_peer = await self.resolve_input_peer(peer)
+        entity = await self.client.get_entity(input_peer)
+        message = await self.client.edit_message(
+            entity=input_peer,
+            message=int(message_id),
+            text=text,
+        )
+        serialized = serialize_message(message, chat_entity=entity)
+        serialized["edited"] = True
+        return serialized
+
+    async def delete_messages(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_ids: list[int],
+        revoke: bool = True,
+    ) -> dict[str, Any]:
+        """Delete messages in a chat."""
+        input_peer = await self.resolve_input_peer(peer)
+        await self.client.delete_messages(
+            entity=input_peer,
+            message_ids=[int(mid) for mid in message_ids],
+            revoke=revoke,
+        )
+        return {"ok": True, "deleted_ids": message_ids, "revoke": revoke}
+
+    async def send_reaction(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        emoticon: str = "👍",
+    ) -> dict[str, Any]:
+        """Send a reaction emoji on a message."""
+        input_peer = await self.resolve_input_peer(peer)
+        await self.client(
+            functions.messages.SendReactionRequest(
+                peer=input_peer,
+                msg_id=int(message_id),
+                reaction=[types.ReactionEmoji(emoticon=emoticon)],
+            )
+        )
+        return {"ok": True, "message_id": message_id, "emoticon": emoticon}
+
     async def list_forum_topics(
         self,
         peer: PeerRef | str | int,

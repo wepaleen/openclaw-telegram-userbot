@@ -57,6 +57,8 @@ class TelethonOpenClawRuntime:
             self._scheduler_send,
             self._scheduler_execute,
             interval=self.scheduler_interval,
+            sync_fn=lambda: sync_all_indexes(self.transport),
+            sync_every=120,  # every 120 ticks × 30s = ~1 hour
         )
         log.info("Telethon/OpenClaw runtime initialized")
 
