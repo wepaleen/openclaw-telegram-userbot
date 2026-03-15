@@ -173,6 +173,10 @@ class OpenClawAgentRuntime:
             )
             log.warning("Emergency escalation detected in message from %s: %s", event.sender_id, event.text[:100])
 
+        # Filter tools based on user role
+        role_tools = filter_tool_schemas(self.tools, user_role)
+        needs_tools = self._looks_like_action(event.text) or is_emergency
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -183,16 +187,16 @@ class OpenClawAgentRuntime:
             if cached:
                 # Only keep non-system messages from cache
                 history = [m for m in cached if m.get("role") != "system"]
+                if not needs_tools and self.chat_client:
+                    # For conversational OpenClaw (no tools), strip tool messages
+                    # to avoid confusing the model with tool_calls/tool results
+                    history = self._filter_history_for_chat(history)
                 messages.extend(history)
                 log.info("Loaded %d cached messages for session %s", len(history), event.session_key)
         except Exception as e:
             log.warning("Failed to load session cache: %s", e)
 
         messages.append({"role": "user", "content": user_content})
-
-        # Filter tools based on user role
-        role_tools = filter_tool_schemas(self.tools, user_role)
-        needs_tools = self._looks_like_action(event.text) or is_emergency
 
         if needs_tools:
             # Action request → use paid tool-calling LLM (OpenRouter/DeepSeek)
@@ -393,6 +397,30 @@ class OpenClawAgentRuntime:
             return f"Напоминание #{result.get('reminder_id', '?')} отменено."
 
         return json.dumps(result, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _filter_history_for_chat(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip tool-call and tool-result messages for non-tool-calling LLMs.
+
+        Keeps only user messages and assistant messages that have plain text content
+        (no tool_calls). This prevents confusing conversational models with
+        tool-related message structures they can't interpret.
+        """
+        filtered: list[dict[str, Any]] = []
+        for msg in history:
+            role = msg.get("role")
+            if role == "tool":
+                continue
+            if role == "assistant":
+                # Skip assistant messages that are purely tool calls (no text)
+                if msg.get("tool_calls") and not (msg.get("content") or "").strip():
+                    continue
+                # For assistant messages with both content and tool_calls, keep only content
+                if msg.get("tool_calls"):
+                    filtered.append({"role": "assistant", "content": msg["content"]})
+                    continue
+            filtered.append(msg)
+        return filtered
 
     @staticmethod
     def _looks_like_action(text: str) -> bool:
