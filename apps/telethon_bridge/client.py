@@ -183,12 +183,8 @@ class TelethonBridgeClient:
         input_peer = await self.resolve_input_peer(command.target_peer)
         entity = await self.client.get_entity(input_peer)
 
-        if (
-            command.reply_to_msg_id is not None
-            and command.top_msg_id is not None
-            and command.reply_to_msg_id != command.top_msg_id
-            and command.top_msg_id != 1
-        ):
+        if command.top_msg_id is not None and command.top_msg_id != 1:
+            # Always use explicit MTProto topic context for forum threads
             message = await self._send_with_topic_context(input_peer, command)
         else:
             reply_target = command.reply_to_msg_id or command.top_msg_id

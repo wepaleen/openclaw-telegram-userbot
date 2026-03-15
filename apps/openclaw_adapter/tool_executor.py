@@ -753,7 +753,13 @@ class OpenClawToolExecutor:
                 event=event,
             )
             reply_to_msg_id = self._as_int(args.get("reply_to_message_id"))
+            # Resolve topic context if topic_query is provided alongside target_query
             top_msg_id = None
+            if self._as_str(args.get("topic_query")) and target_peer.peer_type != PeerType.USER:
+                topic = await self._resolve_topic(target_peer.peer_id, str(args["topic_query"]))
+                top_msg_id = int(topic["top_message_id"])
+                if reply_to_msg_id is None:
+                    reply_to_msg_id = top_msg_id
         else:
             context = await self._resolve_target_context(
                 event=event,

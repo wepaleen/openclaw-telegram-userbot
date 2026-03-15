@@ -174,8 +174,16 @@ class TelethonOpenClawRuntime:
                 resolve_target = f"@{target}"
             else:
                 resolve_target = target
+        log.info(
+            "scheduler_send: chat_id=%s target=%s resolve_target=%s topic_id=%s text=%s",
+            chat_id, target, resolve_target, topic_id, text[:80],
+        )
         peer = await self.transport.resolve_peer_ref(resolve_target)
-        await self.transport.send(
+        log.info(
+            "scheduler_send: resolved peer=%s (type=%s, id=%s, username=%s)",
+            peer, peer.peer_type.value, peer.peer_id, peer.username,
+        )
+        result = await self.transport.send(
             OutboundTelegramCommand(
                 target_peer=peer,
                 text=text,
@@ -184,6 +192,7 @@ class TelethonOpenClawRuntime:
                 idempotency_key=f"scheduler:send:{chat_id}:{topic_id or 0}:{hash(text)}",
             )
         )
+        log.info("scheduler_send: send result=%s", result)
 
     async def _scheduler_execute(self, action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         try:
