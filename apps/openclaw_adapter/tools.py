@@ -135,7 +135,7 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "set_reminder",
-                "description": "Создать одноразовое или повторяющееся напоминание в task core.",
+                "description": "Создать одноразовое или повторяющееся напоминание в task core. target_query указывай только если напоминание нужно доставить другому конкретному адресату.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -304,7 +304,7 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "forward_message",
-                "description": "Переслать сообщение в другой Telegram-чат, личку или тему. Если message_id не передан, используется сообщение, на которое ответили.",
+                "description": "Переслать сообщение в другой Telegram-чат, личку, контакт или тему. target_query может быть контактом, названием диалога, @username или user id. Если message_id не передан, используется сообщение, на которое ответили.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -353,7 +353,7 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "send_private_message",
-                "description": "Отправить личное сообщение человеку по контакту, @username или user id.",
+                "description": "Отправить личное сообщение человеку по контакту из contact book, названию диалога, @username или user id.",
                 "parameters": {
                     "type": "object",
                     "properties": {

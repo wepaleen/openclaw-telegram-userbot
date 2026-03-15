@@ -164,10 +164,11 @@ class TelethonOpenClawRuntime:
         self,
         *,
         chat_id: int,
+        target: str | int | None = None,
         text: str,
         topic_id: int | None = None,
     ) -> None:
-        peer = await self.transport.resolve_peer_ref(chat_id)
+        peer = await self.transport.resolve_peer_ref(target if target is not None else chat_id)
         await self.transport.send(
             OutboundTelegramCommand(
                 target_peer=peer,

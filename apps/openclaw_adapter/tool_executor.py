@@ -353,7 +353,7 @@ class OpenClawToolExecutor:
             fire_at=parsed_time["remind_at_utc"],
             target_chat_id=target_peer.peer_id,
             target_topic_id=target_topic_id,
-            target_user=target_peer.username,
+            target_user=target_peer.username if target_peer.peer_type == PeerType.USER else None,
             recurrence=self._as_str(args.get("recurrence")),
         )
         result["target_peer"] = _serialize_peer(target_peer)

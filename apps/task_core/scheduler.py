@@ -15,6 +15,7 @@ from apps.task_core.store.task_store import (
     mark_reminder_fired,
     mark_task_deadline_notified,
 )
+from apps.task_core.audit import log_action
 
 log = logging.getLogger("task_core.scheduler")
 
@@ -29,15 +30,26 @@ async def _tick(send_fn, execute_fn) -> None:
     reminders = await get_pending_reminders(now)
     for reminder in reminders:
         try:
-            text = reminder["text"]
-            if reminder.get("target_user"):
-                text = f"{reminder['target_user']} {text}"
             await send_fn(
                 chat_id=reminder["target_chat_id"],
-                text=f"🔔 Напоминание: {text}",
+                target=reminder.get("target_user"),
+                text=f"🔔 Напоминание: {reminder['text']}",
                 topic_id=reminder.get("target_topic_id"),
             )
             await mark_reminder_fired(reminder["id"])
+            await log_action(
+                action_type="deliver_reminder",
+                source_chat_id=reminder.get("target_chat_id"),
+                target_chat_id=reminder.get("target_chat_id"),
+                target_topic_id=reminder.get("target_topic_id"),
+                params={
+                    "reminder_id": reminder["id"],
+                    "target_user": reminder.get("target_user"),
+                },
+                result={"ok": True, "fire_at": reminder.get("fire_at")},
+                success=True,
+                llm_used=False,
+            )
             recurrence = reminder.get("recurrence")
             if recurrence:
                 next_fire_at = compute_next_recurrence_fire_at(
@@ -67,6 +79,20 @@ async def _tick(send_fn, execute_fn) -> None:
                     )
             log.info("Fired reminder %d: %s", reminder["id"], reminder["text"][:50])
         except Exception as e:
+            await log_action(
+                action_type="deliver_reminder",
+                source_chat_id=reminder.get("target_chat_id"),
+                target_chat_id=reminder.get("target_chat_id"),
+                target_topic_id=reminder.get("target_topic_id"),
+                params={
+                    "reminder_id": reminder["id"],
+                    "target_user": reminder.get("target_user"),
+                },
+                result={},
+                success=False,
+                error=str(e),
+                llm_used=False,
+            )
             log.error("Failed to fire reminder %d: %s", reminder["id"], e)
 
     tasks = await get_due_tasks(now)
