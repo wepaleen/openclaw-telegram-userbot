@@ -15,6 +15,7 @@ from apps.telethon_bridge.serializers import (
     normalize_new_message_event,
     peer_ref_from_entity,
     serialize_dialog_entity,
+    serialize_member_entity,
     serialize_message,
 )
 from config import settings
@@ -219,12 +220,10 @@ class TelethonBridgeClient:
                 ),
             )
         )
-
-        for update in getattr(result, "updates", []):
-            if isinstance(update, (types.UpdateNewMessage, types.UpdateNewChannelMessage)):
-                return update.message
-
-        raise PeerResolutionError("send_message succeeded but the created message could not be extracted")
+        return self._extract_message_from_updates(
+            result,
+            action_name="send_message",
+        )
 
     async def search_messages(
         self,
@@ -271,6 +270,160 @@ class TelethonBridgeClient:
                 break
         rows.reverse()
         return rows
+
+    async def list_chat_members(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        query: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List participants in a group/channel peer."""
+        input_peer = await self.resolve_input_peer(peer)
+        entity = await self.client.get_entity(input_peer)
+        if isinstance(entity, types.User):
+            raise PeerResolutionError("cannot list members in a private dialog")
+
+        normalized_query = query.strip().lower()
+        rows: list[dict[str, Any]] = []
+        async for participant in self.client.iter_participants(input_peer):
+            row = serialize_member_entity(participant)
+            haystack = " ".join(
+                str(value).lower()
+                for value in [row["id"], row["name"], row["username"]]
+                if value
+            )
+            if normalized_query and normalized_query not in haystack:
+                continue
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        return rows
+
+    async def list_topic_participants(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        top_msg_id: int,
+        query: str = "",
+        limit: int = 20,
+        history_limit: int = 400,
+    ) -> list[dict[str, Any]]:
+        """List distinct participants and their latest messages inside a topic."""
+        input_peer = await self.resolve_input_peer(peer)
+        entity = await self.client.get_entity(input_peer)
+        normalized_query = query.strip().lower()
+        participants: dict[str, dict[str, Any]] = {}
+
+        async for message in self.client.iter_messages(input_peer, limit=history_limit):
+            if not self._message_matches_topic(message, top_msg_id):
+                continue
+
+            sender = getattr(message, "sender", None)
+            if sender is None and getattr(message, "sender_id", None) is not None:
+                try:
+                    sender = await message.get_sender()
+                except Exception:
+                    sender = None
+            if sender is None or getattr(sender, "id", None) is None:
+                continue
+
+            sender_key = str(int(getattr(sender, "id")))
+            if sender_key not in participants:
+                participants[sender_key] = {
+                    "member": serialize_member_entity(sender),
+                    "message_count": 0,
+                    "last_message_id": int(message.id),
+                    "last_message_date": (
+                        message.date.isoformat() if getattr(message, "date", None) else None
+                    ),
+                    "last_text": (message.message or "").strip()[:200],
+                }
+            participants[sender_key]["message_count"] += 1
+
+        rows = list(participants.values())
+        if normalized_query:
+            rows = [
+                row
+                for row in rows
+                if normalized_query in " ".join(
+                    str(value).lower()
+                    for value in [
+                        row["member"].get("id"),
+                        row["member"].get("name"),
+                        row["member"].get("username"),
+                        row.get("last_text"),
+                    ]
+                    if value
+                )
+            ]
+        return rows[:limit]
+
+    async def forward_message(
+        self,
+        *,
+        source_peer: PeerRef | str | int,
+        message_id: int,
+        target_peer: PeerRef | str | int,
+        reply_to_msg_id: int | None = None,
+        top_msg_id: int | None = None,
+        drop_author: bool = False,
+    ) -> dict[str, Any]:
+        """Forward a message to another peer, optionally into a topic/reply context."""
+        input_source = await self.resolve_input_peer(source_peer)
+        input_target = await self.resolve_input_peer(target_peer)
+        target_entity = await self.client.get_entity(input_target)
+
+        reply_to = None
+        if reply_to_msg_id is not None:
+            reply_to = types.InputReplyToMessage(
+                reply_to_msg_id=reply_to_msg_id,
+                top_msg_id=top_msg_id,
+            )
+
+        result = await self.client(
+            functions.messages.ForwardMessagesRequest(
+                from_peer=input_source,
+                id=[int(message_id)],
+                random_id=[random.randrange(1, 2**63 - 1)],
+                to_peer=input_target,
+                top_msg_id=top_msg_id,
+                reply_to=reply_to,
+                drop_author=drop_author,
+            )
+        )
+
+        message = self._extract_message_from_updates(
+            result,
+            action_name="forward_message",
+        )
+        serialized = serialize_message(message, chat_entity=target_entity)
+        serialized["target_peer"] = peer_ref_from_entity(target_entity)
+        serialized["source_message_id"] = int(message_id)
+        serialized["drop_author"] = drop_author
+        return serialized
+
+    async def pin_message(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        notify: bool = False,
+    ) -> dict[str, Any]:
+        """Pin a message inside a Telegram chat/channel."""
+        input_peer = await self.resolve_input_peer(peer)
+        entity = await self.client.get_entity(input_peer)
+        await self.client.pin_message(
+            entity=input_peer,
+            message=int(message_id),
+            notify=notify,
+        )
+        return {
+            "ok": True,
+            "message_id": int(message_id),
+            "peer": peer_ref_from_entity(entity),
+            "notify": notify,
+        }
 
     async def list_forum_topics(
         self,
@@ -326,3 +479,12 @@ class TelethonBridgeClient:
         reply = getattr(message, "reply_to", None)
         reply_id = getattr(reply, "reply_to_msg_id", None)
         return bool(message.id == reply_to_msg_id or reply_id == reply_to_msg_id)
+
+    @staticmethod
+    def _extract_message_from_updates(result: Any, *, action_name: str) -> Any:
+        for update in getattr(result, "updates", []):
+            if isinstance(update, (types.UpdateNewMessage, types.UpdateNewChannelMessage)):
+                return update.message
+        raise PeerResolutionError(
+            f"{action_name} succeeded but the created message could not be extracted"
+        )

@@ -121,13 +121,14 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "set_reminder",
-                "description": "Создать напоминание в task core.",
+                "description": "Создать одноразовое или повторяющееся напоминание в task core.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "text": {"type": "string"},
                         "time_phrase": {"type": "string"},
                         "target_query": {"type": "string"},
+                        "recurrence": {"type": "string"},
                     },
                     "required": ["text", "time_phrase"],
                 },
@@ -150,11 +151,104 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "list_reminders",
+                "description": "Показать активные или завершённые напоминания.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "schedule_action",
+                "description": "Запланировать отложенную отправку сообщения или повторный запуск агента в Telegram на указанное время. Для сложных сценариев укажи action_type=run_agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "time_phrase": {"type": "string"},
+                        "text": {"type": "string"},
+                        "target_query": {"type": "string"},
+                        "chat_query": {"type": "string"},
+                        "topic_query": {"type": "string"},
+                        "reply_to_message_id": {"type": "integer"},
+                        "action_type": {"type": "string"},
+                    },
+                    "required": ["time_phrase", "text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_scheduled_actions",
+                "description": "Показать отложенные действия и повторные AI-запуски по фильтру статуса.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cancel_scheduled_action",
+                "description": "Отменить отложенное действие по id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "scheduled_id": {"type": "integer"},
+                    },
+                    "required": ["scheduled_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "list_overdue_tasks",
                 "description": "Показать просроченные задачи.",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_chat_members",
+                "description": "Показать участников текущего или указанного Telegram-чата.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "chat_query": {"type": "string"},
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_topic_participants",
+                "description": "Показать участников текущей или указанной темы форума и их последние сообщения.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "chat_query": {"type": "string"},
+                        "topic_query": {"type": "string"},
+                        "query": {"type": "string"},
                         "limit": {"type": "integer"},
                     },
                 },
@@ -174,6 +268,40 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
                         "limit": {"type": "integer"},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "forward_message",
+                "description": "Переслать сообщение в другой Telegram-чат, личку или тему. Если message_id не передан, используется сообщение, на которое ответили.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "integer"},
+                        "from_chat_query": {"type": "string"},
+                        "target_query": {"type": "string"},
+                        "chat_query": {"type": "string"},
+                        "topic_query": {"type": "string"},
+                        "reply_to_message_id": {"type": "integer"},
+                        "drop_author": {"type": "boolean"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "pin_message",
+                "description": "Закрепить сообщение в текущем или указанном Telegram-чате. Если message_id не передан, используется сообщение, на которое ответили.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "integer"},
+                        "chat_query": {"type": "string"},
+                        "notify": {"type": "boolean"},
+                    },
                 },
             },
         },

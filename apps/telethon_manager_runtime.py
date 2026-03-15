@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any
 
@@ -18,7 +19,7 @@ from apps.task_core.scheduler import start_scheduler, stop_scheduler
 from apps.telethon_bridge.index_sync import sync_all_indexes
 from apps.telethon_bridge.service import TelethonBridgeService
 from config import settings
-from shared.schemas.telegram import InboundTelegramEvent, OutboundTelegramCommand, PeerType
+from shared.schemas.telegram import InboundTelegramEvent, OutboundTelegramCommand, PeerRef, PeerType
 
 log = logging.getLogger("telethon_manager_runtime")
 
@@ -115,16 +116,35 @@ class TelethonOpenClawRuntime:
         return None
 
     async def _reply_text(self, event: InboundTelegramEvent, text: str) -> None:
+        await self._send_text(
+            target_peer=event.peer,
+            text=text,
+            first_reply_to=event.message_id,
+            followup_reply_to=event.top_msg_id if event.is_topic_message else None,
+            top_msg_id=event.top_msg_id if event.is_topic_message else None,
+        )
+
+    async def _send_text(
+        self,
+        *,
+        target_peer: PeerRef,
+        text: str,
+        first_reply_to: int | None = None,
+        followup_reply_to: int | None = None,
+        top_msg_id: int | None = None,
+        idempotency_prefix: str = "runtime:send",
+    ) -> None:
         parts = [text[i:i + 3500] for i in range(0, len(text), 3500)] or ["(пустой ответ)"]
         first = True
         for part in parts:
             if first:
                 await self.transport.send(
                     OutboundTelegramCommand(
-                        target_peer=event.peer,
+                        target_peer=target_peer,
                         text=part,
-                        reply_to_msg_id=event.message_id,
-                        top_msg_id=event.top_msg_id if event.is_topic_message else None,
+                        reply_to_msg_id=first_reply_to,
+                        top_msg_id=top_msg_id,
+                        idempotency_key=f"{idempotency_prefix}:first:{hash(part)}",
                     )
                 )
                 first = False
@@ -132,10 +152,11 @@ class TelethonOpenClawRuntime:
 
             await self.transport.send(
                 OutboundTelegramCommand(
-                    target_peer=event.peer,
+                    target_peer=target_peer,
                     text=part,
-                    reply_to_msg_id=event.top_msg_id if event.is_topic_message else None,
-                    top_msg_id=event.top_msg_id if event.is_topic_message else None,
+                    reply_to_msg_id=followup_reply_to,
+                    top_msg_id=top_msg_id,
+                    idempotency_key=f"{idempotency_prefix}:next:{hash(part)}",
                 )
             )
 
@@ -204,10 +225,82 @@ class TelethonOpenClawRuntime:
                     )
                 )
 
+            if action_type == "run_agent":
+                return await self._scheduler_run_agent(params)
+
             return {"error": f"unsupported scheduled action: {action_type}"}
         except Exception as e:
             log.exception("Scheduled action failed: %s", action_type)
             return {"error": f"{type(e).__name__}: {e}"}
+
+    async def _scheduler_run_agent(self, params: dict[str, Any]) -> dict[str, Any]:
+        target_peer_raw = params.get("target_peer")
+        if isinstance(target_peer_raw, dict):
+            target_peer = self._dict_to_peer(target_peer_raw)
+        else:
+            target = params.get("target")
+            chat_id = params.get("chat_id")
+            if target is not None:
+                target_peer = await self.transport.resolve_peer_ref(target)
+            elif chat_id is not None:
+                target_peer = await self.transport.resolve_peer_ref(int(chat_id))
+            else:
+                return {"error": "scheduled run_agent requires target_peer, target or chat_id"}
+
+        prompt = str(params.get("prompt") or params.get("text") or "").strip()
+        if not prompt:
+            return {"error": "scheduled run_agent requires prompt"}
+
+        reply_to_msg_id = self._as_int(params.get("reply_to_message_id"))
+        top_msg_id = self._as_int(params.get("top_msg_id"))
+        source_message_id = self._as_int(params.get("source_message_id")) or reply_to_msg_id or 0
+
+        event = InboundTelegramEvent(
+            event_id=(
+                f"scheduler:{target_peer.peer_type.value}:{target_peer.peer_id}:"
+                f"{top_msg_id or reply_to_msg_id or 0}:{int(datetime.now(timezone.utc).timestamp())}"
+            ),
+            account_id="scheduler",
+            peer=target_peer,
+            sender_id=self._as_int(params.get("source_sender_id")),
+            sender_username=params.get("source_sender_username"),
+            message_id=source_message_id,
+            text=prompt,
+            date_utc=datetime.now(timezone.utc),
+            reply_to_msg_id=reply_to_msg_id,
+            top_msg_id=top_msg_id,
+            is_topic_message=bool(top_msg_id),
+            raw_context_ref=str(target_peer.peer_id),
+            metadata={"scheduled": "1"},
+        )
+
+        lock = self._locks[event.session_key]
+        async with lock:
+            result = await self.adapter.handle_event(event)
+
+        if result.text.strip():
+            await self._send_text(
+                target_peer=target_peer,
+                text=result.text,
+                first_reply_to=reply_to_msg_id or top_msg_id,
+                followup_reply_to=top_msg_id,
+                top_msg_id=top_msg_id,
+                idempotency_prefix=(
+                    f"scheduler:run_agent:{target_peer.peer_type.value}:{target_peer.peer_id}"
+                ),
+            )
+
+        return {
+            "ok": True,
+            "result_text": result.text,
+            "tool_rounds": result.tool_rounds,
+            "target_peer": {
+                "peer_type": target_peer.peer_type.value,
+                "peer_id": target_peer.peer_id,
+                "username": target_peer.username,
+                "title": target_peer.title,
+            },
+        }
 
     @staticmethod
     def _as_int(value: Any) -> int | None:
@@ -217,3 +310,13 @@ class TelethonOpenClawRuntime:
         if raw.lstrip("-").isdigit():
             return int(raw)
         return None
+
+    @staticmethod
+    def _dict_to_peer(raw: dict[str, Any]) -> PeerRef:
+        return PeerRef(
+            peer_type=PeerType(str(raw["peer_type"])),
+            peer_id=int(raw["peer_id"]),
+            access_hash=raw.get("access_hash"),
+            username=raw.get("username"),
+            title=raw.get("title"),
+        )

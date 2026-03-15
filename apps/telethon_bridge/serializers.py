@@ -9,7 +9,7 @@ from telethon.tl.custom.message import Message
 from shared.schemas.telegram import InboundTelegramEvent, PeerRef, PeerType
 
 
-def _display_name(entity: Any) -> str | None:
+def display_name(entity: Any) -> str | None:
     title = getattr(entity, "title", None)
     if title:
         return title
@@ -35,7 +35,7 @@ def peer_ref_from_entity(entity: Any) -> PeerRef:
         peer_id=int(getattr(entity, "id")),
         access_hash=getattr(entity, "access_hash", None),
         username=getattr(entity, "username", None),
-        title=_display_name(entity),
+        title=display_name(entity),
     )
 
 
@@ -51,6 +51,23 @@ def serialize_dialog_entity(entity: Any) -> dict[str, Any]:
         "peer_type": peer.peer_type.value,
         "is_forum": bool(getattr(entity, "forum", False)),
         "is_bot": bool(getattr(entity, "bot", False)),
+    }
+
+
+def serialize_member_entity(entity: Any) -> dict[str, Any]:
+    """Serialize a user/channel participant into a compact member row."""
+    username = getattr(entity, "username", None)
+    return {
+        "id": int(getattr(entity, "id")),
+        "name": display_name(entity) or username or str(getattr(entity, "id")),
+        "username": f"@{username}" if username else None,
+        "peer": {
+            "peer_type": peer_ref_from_entity(entity).peer_type.value,
+            "peer_id": int(getattr(entity, "id")),
+            "access_hash": getattr(entity, "access_hash", None),
+            "username": username,
+            "title": display_name(entity),
+        },
     }
 
 
@@ -79,14 +96,14 @@ def serialize_message(
     sender_name = None
     sender_username = None
     if sender is not None:
-        sender_name = _display_name(sender)
+        sender_name = display_name(sender)
         raw_username = getattr(sender, "username", None)
         sender_username = f"@{raw_username}" if raw_username else None
 
     return {
         "id": int(message.id),
         "peer_id": int(getattr(chat, "id", 0)) if chat is not None else None,
-        "chat_title": _display_name(chat) if chat is not None else None,
+        "chat_title": display_name(chat) if chat is not None else None,
         "date_utc": message.date.isoformat() if getattr(message, "date", None) else None,
         "sender_id": int(getattr(sender, "id")) if sender is not None and getattr(sender, "id", None) else None,
         "sender_name": sender_name,
@@ -133,6 +150,6 @@ async def normalize_new_message_event(
         raw_context_ref=str(getattr(event, "chat_id", "")),
         metadata={
             "outgoing": "1" if getattr(event, "out", False) else "0",
-            "chat_title": _display_name(chat) or "",
+            "chat_title": display_name(chat) or "",
         },
     )

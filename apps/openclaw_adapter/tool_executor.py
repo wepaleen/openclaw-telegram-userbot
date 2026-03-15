@@ -7,16 +7,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.task_core.store.task_store import (
+    cancel_scheduled_action,
     cancel_reminder,
     complete_task,
     create_reminder,
+    create_scheduled_action,
     create_task,
     format_local_datetime,
     get_due_tasks,
+    list_scheduled_actions,
+    list_reminders,
     list_tasks,
     parse_datetime_input,
     update_task,
 )
+from apps.task_core.audit import Timer, log_action
 from apps.telethon_bridge.service import TelethonBridgeService
 from config import normalize_chat_id, settings
 from resolver.chats import search_chats, search_topics
@@ -70,52 +75,91 @@ class OpenClawToolExecutor:
         event: InboundTelegramEvent,
     ) -> dict[str, Any]:
         try:
-            if name == "list_available_chats":
-                return await self._list_available_chats(limit=int(args.get("limit", 50)))
-            if name == "resolve_recipient":
-                return await self._resolve_recipient(
-                    query=str(args["query"]),
-                    event=event,
-                )
-            if name == "resolve_target_context":
-                return await self._resolve_target_context(
-                    event=event,
-                    chat_query=self._as_str(args.get("chat_query")),
-                    topic_query=self._as_str(args.get("topic_query")),
-                    reply_to_message_id=self._as_int(args.get("reply_to_message_id")),
-                    prefer_current_context=bool(args.get("prefer_current_context", True)),
-                )
-            if name == "parse_time":
-                return self._parse_time(
-                    time_phrase=str(args["time_phrase"]),
-                    timezone_name=self._as_str(args.get("timezone")),
-                )
-            if name == "create_task":
-                return await self._create_task(event, args)
-            if name == "update_task":
-                return await self._update_task(args)
-            if name == "list_tasks":
-                return await self._list_tasks(args)
-            if name == "complete_task":
-                return await complete_task(int(args["task_id"]))
-            if name == "set_reminder":
-                return await self._set_reminder(event, args)
-            if name == "cancel_reminder":
-                return await cancel_reminder(int(args["reminder_id"]))
-            if name == "list_overdue_tasks":
-                return await self._list_overdue_tasks(limit=int(args.get("limit", 20)))
-            if name == "search_messages":
-                return await self._search_messages(event, args)
-            if name == "get_recent_context":
-                return await self._get_recent_context(event, args)
-            if name == "send_message":
-                return await self._send_message(event, args)
-            return {"error": f"unknown tool: {name}"}
+            with Timer() as timer:
+                result = await self._execute_inner(name=name, args=args, event=event)
         except ToolExecutionError as e:
-            return {"error": str(e)}
+            result = {"error": str(e)}
+            latency_ms = None
         except Exception as e:
             log.exception("Tool %s failed", name)
-            return {"error": f"{type(e).__name__}: {e}"}
+            result = {"error": f"{type(e).__name__}: {e}"}
+            latency_ms = None
+        else:
+            latency_ms = timer.elapsed_ms
+
+        await self._audit_tool_execution(
+            name=name,
+            args=args,
+            event=event,
+            result=result,
+            latency_ms=latency_ms,
+        )
+        return result
+
+    async def _execute_inner(
+        self,
+        *,
+        name: str,
+        args: dict[str, Any],
+        event: InboundTelegramEvent,
+    ) -> dict[str, Any]:
+        if name == "list_available_chats":
+            return await self._list_available_chats(limit=int(args.get("limit", 50)))
+        if name == "resolve_recipient":
+            return await self._resolve_recipient(
+                query=str(args["query"]),
+                event=event,
+            )
+        if name == "resolve_target_context":
+            return await self._resolve_target_context(
+                event=event,
+                chat_query=self._as_str(args.get("chat_query")),
+                topic_query=self._as_str(args.get("topic_query")),
+                reply_to_message_id=self._as_int(args.get("reply_to_message_id")),
+                prefer_current_context=bool(args.get("prefer_current_context", True)),
+            )
+        if name == "parse_time":
+            return self._parse_time(
+                time_phrase=str(args["time_phrase"]),
+                timezone_name=self._as_str(args.get("timezone")),
+            )
+        if name == "create_task":
+            return await self._create_task(event, args)
+        if name == "update_task":
+            return await self._update_task(args)
+        if name == "list_tasks":
+            return await self._list_tasks(args)
+        if name == "complete_task":
+            return await complete_task(int(args["task_id"]))
+        if name == "set_reminder":
+            return await self._set_reminder(event, args)
+        if name == "cancel_reminder":
+            return await cancel_reminder(int(args["reminder_id"]))
+        if name == "list_reminders":
+            return await self._list_reminders(args)
+        if name == "schedule_action":
+            return await self._schedule_action(event, args)
+        if name == "list_scheduled_actions":
+            return await self._list_scheduled_actions(args)
+        if name == "cancel_scheduled_action":
+            return await cancel_scheduled_action(int(args["scheduled_id"]))
+        if name == "list_overdue_tasks":
+            return await self._list_overdue_tasks(limit=int(args.get("limit", 20)))
+        if name == "list_chat_members":
+            return await self._list_chat_members(event, args)
+        if name == "list_topic_participants":
+            return await self._list_topic_participants(event, args)
+        if name == "search_messages":
+            return await self._search_messages(event, args)
+        if name == "forward_message":
+            return await self._forward_message(event, args)
+        if name == "pin_message":
+            return await self._pin_message(event, args)
+        if name == "get_recent_context":
+            return await self._get_recent_context(event, args)
+        if name == "send_message":
+            return await self._send_message(event, args)
+        return {"error": f"unknown tool: {name}"}
 
     async def _list_available_chats(self, limit: int) -> dict[str, Any]:
         dialogs = await self.transport.list_dialogs(limit=limit)
@@ -282,16 +326,173 @@ class OpenClawToolExecutor:
             target_chat_id=target_peer.peer_id,
             target_topic_id=target_topic_id,
             target_user=target_peer.username,
+            recurrence=self._as_str(args.get("recurrence")),
         )
         result["target_peer"] = _serialize_peer(target_peer)
         result["remind_at_local"] = parsed_time["remind_at_local"]
         result["timezone"] = parsed_time["timezone"]
         return result
 
+    async def _list_reminders(self, args: dict[str, Any]) -> dict[str, Any]:
+        reminders = await list_reminders(
+            status=self._as_str(args.get("status")) or "pending",
+            limit=int(args.get("limit", 20)),
+        )
+        for reminder in reminders:
+            reminder["fire_at_local"] = format_local_datetime(reminder.get("fire_at"))
+        return {"reminders": reminders}
+
+    async def _list_scheduled_actions(self, args: dict[str, Any]) -> dict[str, Any]:
+        actions = await list_scheduled_actions(
+            status=self._as_str(args.get("status")) or "pending",
+            limit=int(args.get("limit", 20)),
+        )
+        for action in actions:
+            action["execute_at_local"] = format_local_datetime(action.get("execute_at"))
+        return {"scheduled_actions": actions}
+
+    async def _schedule_action(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        parsed_time = self._parse_time(
+            time_phrase=str(args["time_phrase"]),
+            timezone_name=settings.bot_timezone,
+        )
+
+        requested_action_type = self._as_str(args.get("action_type"))
+        text = str(args["text"])
+
+        if self._as_str(args.get("target_query")):
+            target_peer, source_context = await self._resolve_peer_query(
+                query=str(args["target_query"]),
+                event=event,
+            )
+            reply_to_msg_id = self._as_int(args.get("reply_to_message_id"))
+            top_msg_id = None
+        else:
+            context = await self._resolve_target_context(
+                event=event,
+                chat_query=self._as_str(args.get("chat_query")),
+                topic_query=self._as_str(args.get("topic_query")),
+                reply_to_message_id=self._as_int(args.get("reply_to_message_id")),
+                prefer_current_context=True,
+            )
+            target_peer = self._dict_to_peer(context["peer"])
+            reply_to_msg_id = context.get("reply_to_msg_id")
+            top_msg_id = context.get("top_msg_id")
+            source_context = context.get("source", "current_context")
+
+        if requested_action_type in {"run_agent", "agent_prompt"}:
+            action_type = "run_agent"
+            action_params = {
+                "prompt": text,
+                "target_peer": _serialize_peer(target_peer),
+                "reply_to_message_id": reply_to_msg_id,
+                "top_msg_id": top_msg_id,
+                "source_sender_id": event.sender_id,
+                "source_sender_username": event.sender_username,
+                "source_message_id": event.message_id,
+            }
+        elif target_peer.peer_type == PeerType.USER:
+            action_type = requested_action_type or "send_private"
+            action_params = {
+                "target": target_peer.username or target_peer.peer_id,
+                "text": text,
+            }
+        elif top_msg_id:
+            action_type = requested_action_type or "send_topic"
+            action_params = {
+                "chat_id": target_peer.peer_id,
+                "top_msg_id": top_msg_id,
+                "reply_to_message_id": reply_to_msg_id or top_msg_id,
+                "text": text,
+            }
+        else:
+            action_type = requested_action_type or "send_message"
+            action_params = {
+                "chat_id": target_peer.peer_id,
+                "reply_to_message_id": reply_to_msg_id,
+                "text": text,
+            }
+
+        if action_type not in {"send_message", "send_chat", "send_private", "send_topic", "run_agent"}:
+            raise ToolExecutionError(
+                "schedule_action пока поддерживает только send_message, send_chat, send_private, send_topic и run_agent"
+            )
+
+        result = await create_scheduled_action(
+            action_type=action_type,
+            action_params=action_params,
+            execute_at=parsed_time["remind_at_utc"],
+            source_chat_id=event.peer.peer_id,
+            source_message_id=event.message_id,
+        )
+        result["execute_at_local"] = parsed_time["remind_at_local"]
+        result["timezone"] = parsed_time["timezone"]
+        result["action_type"] = action_type
+        result["action_params"] = action_params
+        result["source"] = source_context
+        return result
+
     async def _list_overdue_tasks(self, limit: int) -> dict[str, Any]:
         now_utc = datetime.now(timezone.utc).isoformat()
         tasks = await get_due_tasks(now_utc)
         return {"tasks": tasks[:limit]}
+
+    async def _list_chat_members(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._as_str(args.get("chat_query")):
+            peer, source = await self._resolve_chat_peer(str(args["chat_query"]))
+        else:
+            peer = event.peer
+            source = "current_context"
+
+        if peer.peer_type == PeerType.USER:
+            raise ToolExecutionError("в личном диалоге нет списка участников")
+
+        members = await self.transport.list_chat_members(
+            peer=peer,
+            query=self._as_str(args.get("query")) or "",
+            limit=int(args.get("limit", 50)),
+        )
+        return {
+            "peer": _serialize_peer(peer),
+            "source": source,
+            "members": members,
+        }
+
+    async def _list_topic_participants(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        context = await self._resolve_target_context(
+            event=event,
+            chat_query=self._as_str(args.get("chat_query")),
+            topic_query=self._as_str(args.get("topic_query")),
+            reply_to_message_id=None,
+            prefer_current_context=True,
+        )
+        top_msg_id = context.get("top_msg_id")
+        if not top_msg_id:
+            raise ToolExecutionError("не удалось определить тему для list_topic_participants")
+
+        peer = self._dict_to_peer(context["peer"])
+        participants = await self.transport.list_topic_participants(
+            peer=peer,
+            top_msg_id=int(top_msg_id),
+            query=self._as_str(args.get("query")) or "",
+            limit=int(args.get("limit", 20)),
+        )
+        return {
+            "context": context,
+            "participants": participants,
+        }
 
     async def _search_messages(
         self,
@@ -346,6 +547,80 @@ class OpenClawToolExecutor:
             "searched_peers": searched,
             "messages": rows[:limit],
         }
+
+    async def _forward_message(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        source_peer = event.peer
+        source = "current_context"
+        if self._as_str(args.get("from_chat_query")):
+            source_peer, source = await self._resolve_chat_peer(str(args["from_chat_query"]))
+
+        message_id = self._as_int(args.get("message_id")) or event.reply_to_msg_id
+        if message_id is None:
+            raise ToolExecutionError(
+                "для forward_message нужен message_id или reply на сообщение"
+            )
+
+        if self._as_str(args.get("target_query")):
+            target_peer, target_source = await self._resolve_peer_query(
+                query=str(args["target_query"]),
+                event=event,
+            )
+            reply_to_msg_id = self._as_int(args.get("reply_to_message_id"))
+            top_msg_id = None
+        else:
+            context = await self._resolve_target_context(
+                event=event,
+                chat_query=self._as_str(args.get("chat_query")),
+                topic_query=self._as_str(args.get("topic_query")),
+                reply_to_message_id=self._as_int(args.get("reply_to_message_id")),
+                prefer_current_context=True,
+            )
+            target_peer = self._dict_to_peer(context["peer"])
+            reply_to_msg_id = context.get("reply_to_msg_id")
+            top_msg_id = context.get("top_msg_id")
+            target_source = context.get("source", "current_context")
+
+        result = await self.transport.forward_message(
+            source_peer=source_peer,
+            message_id=int(message_id),
+            target_peer=target_peer,
+            reply_to_msg_id=reply_to_msg_id,
+            top_msg_id=top_msg_id,
+            drop_author=bool(args.get("drop_author", False)),
+        )
+        result["source_peer"] = _serialize_peer(source_peer)
+        result["target_peer"] = _serialize_peer(target_peer)
+        result["source"] = source
+        result["target_source"] = target_source
+        return result
+
+    async def _pin_message(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._as_str(args.get("chat_query")):
+            peer, source = await self._resolve_chat_peer(str(args["chat_query"]))
+        else:
+            peer = event.peer
+            source = "current_context"
+
+        message_id = self._as_int(args.get("message_id")) or event.reply_to_msg_id
+        if message_id is None:
+            raise ToolExecutionError("для pin_message нужен message_id или reply на сообщение")
+
+        result = await self.transport.pin_message(
+            peer=peer,
+            message_id=int(message_id),
+            notify=bool(args.get("notify", False)),
+        )
+        result["peer"] = _serialize_peer(peer)
+        result["source"] = source
+        return result
 
     async def _get_recent_context(
         self,
@@ -517,6 +792,52 @@ class OpenClawToolExecutor:
             username=raw.get("username"),
             title=raw.get("title"),
         )
+
+    async def _audit_tool_execution(
+        self,
+        *,
+        name: str,
+        args: dict[str, Any],
+        event: InboundTelegramEvent,
+        result: dict[str, Any],
+        latency_ms: int | None,
+    ) -> None:
+        target_chat_id, target_topic_id = self._extract_audit_target(result)
+        await log_action(
+            action_type=name,
+            intent=event.text,
+            source_chat_id=event.peer.peer_id,
+            source_message_id=event.message_id,
+            source_user_id=event.sender_id,
+            target_chat_id=target_chat_id,
+            target_topic_id=target_topic_id,
+            params=args,
+            result=result,
+            success=not bool(result.get("error")),
+            error=result.get("error"),
+            llm_used=True,
+            latency_ms=latency_ms,
+        )
+
+    @classmethod
+    def _extract_audit_target(cls, result: dict[str, Any]) -> tuple[int | None, int | None]:
+        peer = result.get("target_peer") or result.get("peer")
+        if isinstance(peer, dict) and peer.get("peer_id") is not None:
+            return int(peer["peer_id"]), cls._as_int(result.get("top_msg_id"))
+
+        context = result.get("context")
+        if isinstance(context, dict):
+            context_peer = context.get("peer")
+            if isinstance(context_peer, dict) and context_peer.get("peer_id") is not None:
+                return int(context_peer["peer_id"]), cls._as_int(context.get("top_msg_id"))
+
+        action_params = result.get("action_params")
+        if isinstance(action_params, dict):
+            return cls._as_int(action_params.get("chat_id")), cls._as_int(
+                action_params.get("top_msg_id")
+            )
+
+        return None, None
 
     @staticmethod
     def _as_str(value: Any) -> str | None:

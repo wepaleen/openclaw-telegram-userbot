@@ -107,6 +107,74 @@ BOT_RUNTIME=pyrogram python3 main.py
 python3 main_pyrogram.py
 ```
 
+## Плавый Переход С Pyrogram На Telethon
+
+Да, перенос можно сделать плавно, без удаления старой `Pyrogram`-сессии.
+
+Что важно:
+
+- использовать **тот же Telegram-аккаунт** можно;
+- использовать **тот же `Pyrogram` `.session` файл напрямую в `Telethon` нельзя**;
+- для `Telethon` нужно создать отдельную `TELETHON_STRING_SESSION`.
+
+Рекомендуемый порядок:
+
+1. Оставьте legacy-настройки как есть:
+
+```env
+PYROGRAM_SESSION=openclaw_userbot
+```
+
+2. Добавьте Telethon-настройки:
+
+```env
+BOT_RUNTIME=telethon
+TELETHON_SESSION_NAME=openclaw_userbot_telethon
+TELETHON_STRING_SESSION=
+```
+
+3. Создайте отдельную `Telethon`-сессию:
+
+```bash
+source .venv/bin/activate
+python3 scripts/create_telethon_session.py
+```
+
+4. Скопируйте полученную строку в `.env`:
+
+```env
+TELETHON_STRING_SESSION=вставьте_сюда_длинную_строку
+```
+
+5. Проверьте новый runtime вручную:
+
+```bash
+source .venv/bin/activate
+BOT_RUNTIME=telethon python3 main.py
+```
+
+6. Убедитесь, что новый runtime:
+
+- отвечает в личке;
+- отвечает в группе по `!ai`;
+- видит OpenClaw;
+- поднимает базу и scheduler без ошибок.
+
+7. Если всё в порядке, оставьте `BOT_RUNTIME=telethon` как основной режим.
+
+8. Если нужно быстро откатиться:
+
+```bash
+source .venv/bin/activate
+BOT_RUNTIME=pyrogram python3 main.py
+```
+
+Практический совет:
+
+- не держите оба runtime долго одновременно в одних и тех же чатах;
+- сначала погоняйте `Telethon` в личке или в тестовой группе;
+- старую `Pyrogram`-сессию не удаляйте до завершения миграции.
+
 ## Что Происходит При Старте
 
 В `telethon` runtime:

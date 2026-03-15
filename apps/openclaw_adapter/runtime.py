@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from apps.openclaw_adapter.client import OpenClawChatClient
@@ -129,7 +130,14 @@ class OpenClawAgentRuntime:
         recent_context: list[dict[str, Any]],
         available_chats: list[dict[str, Any]],
     ) -> str:
+        now_local = datetime.now(settings.tzinfo)
+        now_utc = datetime.now(timezone.utc)
         context = {
+            "now": {
+                "local": now_local.isoformat(),
+                "utc": now_utc.isoformat(),
+                "timezone": settings.bot_timezone,
+            },
             "event": {
                 "event_id": event.event_id,
                 "account_id": event.account_id,
@@ -150,6 +158,8 @@ class OpenClawAgentRuntime:
         return (
             "Контекст Telegram:\n"
             + json.dumps(context, ensure_ascii=False, indent=2)
+            + "\n\nТекущая дата и время: "
+            + now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
             + "\n\nЗапрос пользователя: "
             + event.text
         )

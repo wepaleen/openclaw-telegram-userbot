@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 
 from apps.task_core.store.task_store import (
+    compute_next_recurrence_fire_at,
+    create_reminder,
     format_local_datetime,
     get_due_tasks,
     get_pending_actions,
@@ -36,6 +38,33 @@ async def _tick(send_fn, execute_fn) -> None:
                 topic_id=reminder.get("target_topic_id"),
             )
             await mark_reminder_fired(reminder["id"])
+            recurrence = reminder.get("recurrence")
+            if recurrence:
+                next_fire_at = compute_next_recurrence_fire_at(
+                    reminder.get("fire_at"),
+                    recurrence,
+                )
+                if next_fire_at:
+                    await create_reminder(
+                        text=reminder["text"],
+                        fire_at=next_fire_at,
+                        target_chat_id=reminder["target_chat_id"],
+                        target_topic_id=reminder.get("target_topic_id"),
+                        target_user=reminder.get("target_user"),
+                        recurrence=recurrence,
+                        task_id=reminder.get("task_id"),
+                    )
+                    log.info(
+                        "Rescheduled recurring reminder %d -> %s",
+                        reminder["id"],
+                        next_fire_at,
+                    )
+                else:
+                    log.warning(
+                        "Reminder %d has unsupported recurrence: %s",
+                        reminder["id"],
+                        recurrence,
+                    )
             log.info("Fired reminder %d: %s", reminder["id"], reminder["text"][:50])
         except Exception as e:
             log.error("Failed to fire reminder %d: %s", reminder["id"], e)

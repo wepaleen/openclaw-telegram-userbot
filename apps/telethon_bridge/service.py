@@ -61,6 +61,36 @@ class TelethonBridgeService:
             from_peer=from_peer,
         )
 
+    async def list_chat_members(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        query: str = "",
+        limit: int = 50,
+    ) -> list[dict]:
+        return await self.client.list_chat_members(
+            peer=peer,
+            query=query,
+            limit=limit,
+        )
+
+    async def list_topic_participants(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        top_msg_id: int,
+        query: str = "",
+        limit: int = 20,
+        history_limit: int = 400,
+    ) -> list[dict]:
+        return await self.client.list_topic_participants(
+            peer=peer,
+            top_msg_id=top_msg_id,
+            query=query,
+            limit=limit,
+            history_limit=history_limit,
+        )
+
     async def get_recent_context(
         self,
         peer: PeerRef | str | int,
@@ -74,6 +104,38 @@ class TelethonBridgeService:
             limit=limit,
             top_msg_id=top_msg_id,
             reply_to_msg_id=reply_to_msg_id,
+        )
+
+    async def forward_message(
+        self,
+        *,
+        source_peer: PeerRef | str | int,
+        message_id: int,
+        target_peer: PeerRef | str | int,
+        reply_to_msg_id: int | None = None,
+        top_msg_id: int | None = None,
+        drop_author: bool = False,
+    ) -> dict:
+        return await self.client.forward_message(
+            source_peer=source_peer,
+            message_id=message_id,
+            target_peer=target_peer,
+            reply_to_msg_id=reply_to_msg_id,
+            top_msg_id=top_msg_id,
+            drop_author=drop_author,
+        )
+
+    async def pin_message(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        message_id: int,
+        notify: bool = False,
+    ) -> dict:
+        return await self.client.pin_message(
+            peer=peer,
+            message_id=message_id,
+            notify=notify,
         )
 
     async def _dispatch(self, event: InboundTelegramEvent) -> None:

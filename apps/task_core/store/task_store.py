@@ -183,20 +183,55 @@ async def create_scheduled_action(
     action_params: dict,
     execute_at: str,
     source_chat_id: int | None = None,
+    source_message_id: int | None = None,
 ) -> dict[str, Any]:
     db = await get_db()
     cursor = await db.execute(
-        "INSERT INTO scheduled_actions (action_type, action_params, execute_at, source_chat_id) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO scheduled_actions "
+        "(action_type, action_params, execute_at, source_chat_id, source_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
         (
             action_type,
             json.dumps(action_params, ensure_ascii=False),
             execute_at,
             source_chat_id,
+            source_message_id,
         ),
     )
     await db.commit()
     return {"ok": True, "scheduled_id": cursor.lastrowid, "execute_at": execute_at}
+
+
+async def list_scheduled_actions(
+    status: str | None = "pending",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    db = await get_db()
+    query = "SELECT * FROM scheduled_actions WHERE 1=1"
+    params: list[Any] = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY execute_at ASC LIMIT ?"
+    params.append(limit)
+    rows = await db.execute_fetchall(query, params)
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["action_params"] = json.loads(item.get("action_params", "{}"))
+        result.append(item)
+    return result
+
+
+async def cancel_scheduled_action(action_id: int) -> dict[str, Any]:
+    db = await get_db()
+    await db.execute(
+        "UPDATE scheduled_actions SET status = 'cancelled' "
+        "WHERE id = ? AND status = 'pending'",
+        (action_id,),
+    )
+    await db.commit()
+    return {"ok": True, "scheduled_id": action_id}
 
 
 async def get_pending_actions(before: str) -> list[dict[str, Any]]:
@@ -253,6 +288,57 @@ def parse_time_delta(delta_str: str) -> timedelta | None:
         return timedelta(minutes=value)
     if unit in ("час", "часов", "часа", "ч", "hour", "hours", "h"):
         return timedelta(hours=value)
+    return None
+
+
+def parse_recurrence_interval(value: str | None) -> timedelta | None:
+    """Parse recurring intervals like 'каждый день' or 'every 2 hours'."""
+    import re
+
+    if not value:
+        return None
+
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+
+    alias_map = {
+        "hourly": timedelta(hours=1),
+        "every hour": timedelta(hours=1),
+        "каждый час": timedelta(hours=1),
+        "ежечасно": timedelta(hours=1),
+        "daily": timedelta(days=1),
+        "every day": timedelta(days=1),
+        "каждый день": timedelta(days=1),
+        "ежедневно": timedelta(days=1),
+        "weekly": timedelta(weeks=1),
+        "every week": timedelta(weeks=1),
+        "каждую неделю": timedelta(weeks=1),
+        "еженедельно": timedelta(weeks=1),
+    }
+    if raw in alias_map:
+        return alias_map[raw]
+
+    match = re.match(
+        r"^(?:every|каждые?|раз в)\s+(\d+)\s*"
+        r"(minutes?|mins?|hours?|days?|weeks?|"
+        r"мин(?:ут[аы]?)?|час(?:а|ов)?|дн(?:я|ей)?|недел(?:ю|и|ь))$",
+        raw,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    value_num = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit in {"minute", "minutes", "min", "mins", "мин", "минута", "минуты", "минут"}:
+        return timedelta(minutes=value_num)
+    if unit in {"hour", "hours", "час", "часа", "часов"}:
+        return timedelta(hours=value_num)
+    if unit in {"day", "days", "дня", "дней"}:
+        return timedelta(days=value_num)
+    if unit in {"week", "weeks", "неделю", "недели", "недель"}:
+        return timedelta(weeks=value_num)
     return None
 
 
@@ -353,6 +439,34 @@ def parse_datetime_input(value: str | None, now: datetime | None = None) -> str 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=settings.tzinfo)
     return _to_utc_iso(parsed)
+
+
+def compute_next_recurrence_fire_at(
+    current_fire_at: str | None,
+    recurrence: str | None,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Compute the next UTC fire time for a recurring reminder."""
+    if not current_fire_at or not recurrence:
+        return None
+
+    interval = parse_recurrence_interval(recurrence)
+    if interval is None:
+        return None
+
+    try:
+        next_fire = datetime.fromisoformat(current_fire_at)
+    except ValueError:
+        return None
+
+    if next_fire.tzinfo is None:
+        next_fire = next_fire.replace(tzinfo=timezone.utc)
+
+    reference = now or datetime.now(timezone.utc)
+    while next_fire <= reference:
+        next_fire += interval
+    return next_fire.astimezone(timezone.utc).isoformat()
 
 
 def format_local_datetime(value: str | None) -> str | None:
