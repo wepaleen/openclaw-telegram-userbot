@@ -165,6 +165,15 @@ class TelethonBridgeService:
     ) -> dict:
         return await self.client.send_reaction(peer, message_id=message_id, emoticon=emoticon)
 
+    async def set_typing(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        typing: bool = True,
+        top_msg_id: int | None = None,
+    ) -> None:
+        await self.client.set_typing(peer, typing=typing, top_msg_id=top_msg_id)
+
     async def _dispatch(self, event: InboundTelegramEvent) -> None:
         for handler in list(self._handlers):
             await handler(event)

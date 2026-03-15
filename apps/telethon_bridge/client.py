@@ -480,6 +480,24 @@ class TelethonBridgeClient:
         )
         return {"ok": True, "message_id": message_id, "emoticon": emoticon}
 
+    async def set_typing(
+        self,
+        peer: PeerRef | str | int,
+        *,
+        typing: bool = True,
+        top_msg_id: int | None = None,
+    ) -> None:
+        """Send or cancel typing indicator."""
+        input_peer = await self.resolve_input_peer(peer)
+        action = types.SendMessageTypingAction() if typing else types.SendMessageCancelAction()
+        await self.client(
+            functions.messages.SetTypingRequest(
+                peer=input_peer,
+                action=action,
+                top_msg_id=top_msg_id or 0,
+            )
+        )
+
     async def list_forum_topics(
         self,
         peer: PeerRef | str | int,

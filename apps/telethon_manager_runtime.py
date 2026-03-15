@@ -93,6 +93,14 @@ class TelethonOpenClawRuntime:
         except Exception as e:
             log.debug("Could not set 👀 reaction: %s", e)
 
+        # Show "typing..." indicator while processing
+        try:
+            await self.transport.set_typing(
+                event.peer, typing=True, top_msg_id=event.top_msg_id,
+            )
+        except Exception:
+            pass
+
         lock = self._locks[event.session_key]
         async with lock:
             try:
