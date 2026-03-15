@@ -25,7 +25,7 @@ from apps.task_core.audit import Timer, log_action
 from apps.telethon_bridge.service import TelethonBridgeService
 from config import normalize_chat_id, settings
 from resolver.chats import search_chats, search_topics
-from resolver.contacts import search_contacts
+from resolver.contacts import list_contacts, search_contacts
 from shared.schemas.telegram import (
     InboundTelegramEvent,
     OutboundTelegramCommand,
@@ -105,6 +105,8 @@ class OpenClawToolExecutor:
     ) -> dict[str, Any]:
         if name == "list_available_chats":
             return await self._list_available_chats(limit=int(args.get("limit", 50)))
+        if name == "list_contacts":
+            return await self._list_contacts(args)
         if name == "resolve_recipient":
             return await self._resolve_recipient(
                 query=str(args["query"]),
@@ -157,6 +159,8 @@ class OpenClawToolExecutor:
             return await self._pin_message(event, args)
         if name == "get_recent_context":
             return await self._get_recent_context(event, args)
+        if name == "send_private_message":
+            return await self._send_private_message(event, args)
         if name == "send_message":
             return await self._send_message(event, args)
         return {"error": f"unknown tool: {name}"}
@@ -164,6 +168,28 @@ class OpenClawToolExecutor:
     async def _list_available_chats(self, limit: int) -> dict[str, Any]:
         dialogs = await self.transport.list_dialogs(limit=limit)
         return {"chats": [_serialize_peer(peer) for peer in dialogs]}
+
+    async def _list_contacts(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = self._as_str(args.get("query"))
+        limit = int(args.get("limit", 50))
+        rows = await list_contacts(limit=max(limit * 2, limit))
+        if query:
+            normalized = query.lower()
+            rows = [
+                row
+                for row in rows
+                if normalized in " ".join(
+                    str(value).lower()
+                    for value in [
+                        row.get("display_name"),
+                        row.get("username"),
+                        row.get("user_id"),
+                        row.get("aliases"),
+                    ]
+                    if value
+                )
+            ]
+        return {"contacts": rows[:limit]}
 
     async def _resolve_recipient(
         self,
@@ -676,6 +702,31 @@ class OpenClawToolExecutor:
                 reply_to_msg_id=reply_to_msg_id,
                 top_msg_id=top_msg_id,
                 idempotency_key=f"{event.event_id}:send_message",
+            )
+        )
+        result["target_peer"] = _serialize_peer(target_peer)
+        result["source"] = source
+        return result
+
+    async def _send_private_message(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        target_peer, source = await self._resolve_peer_query(
+            query=str(args["target_query"]),
+            event=event,
+        )
+        if target_peer.peer_type != PeerType.USER:
+            raise ToolExecutionError(
+                "send_private_message можно использовать только для личного диалога с человеком"
+            )
+
+        result = await self.transport.send(
+            OutboundTelegramCommand(
+                target_peer=target_peer,
+                text=str(args["text"]),
+                idempotency_key=f"{event.event_id}:send_private_message",
             )
         )
         result["target_peer"] = _serialize_peer(target_peer)

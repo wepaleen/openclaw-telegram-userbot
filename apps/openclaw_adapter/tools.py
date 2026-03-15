@@ -9,6 +9,20 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "list_contacts",
+                "description": "Показать контакты из локальной контактной книги, чтобы выбрать адресата для личного сообщения.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "resolve_recipient",
                 "description": "Разрешить человека, @username или алиас в конкретный peer Telegram.",
                 "parameters": {
@@ -317,6 +331,21 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
                         "topic_query": {"type": "string"},
                         "limit": {"type": "integer"},
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "send_private_message",
+                "description": "Отправить личное сообщение человеку по контакту, @username или user id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target_query": {"type": "string"},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["target_query", "text"],
                 },
             },
         },
