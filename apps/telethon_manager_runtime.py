@@ -81,6 +81,18 @@ class TelethonOpenClawRuntime:
             await self.shutdown()
 
     async def handle_event(self, event: InboundTelegramEvent) -> None:
+        # Auto-resolve mention tracker when someone sends a message in a chat
+        if event.sender_username and event.peer.peer_type != PeerType.USER:
+            try:
+                from apps.task_core.store.mention_tracker import resolve_mentions_by_sender
+                await resolve_mentions_by_sender(
+                    sender_username=event.sender_username,
+                    chat_id=event.peer.peer_id,
+                    topic_id=event.top_msg_id,
+                )
+            except Exception as e:
+                log.debug("mention_tracker resolve failed: %s", e)
+
         normalized_text = self._normalize_event_text(event)
         if not normalized_text:
             return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -180,6 +181,8 @@ class OpenClawToolExecutor:
             return self._read_spreadsheet(args)
         if name == "list_sheets":
             return self._list_sheets(args)
+        if name == "check_mention_limit":
+            return await self._check_mention_limit(event, args)
         return {"error": f"unknown tool: {name}"}
 
     async def _list_available_chats(self, limit: int) -> dict[str, Any]:
@@ -849,6 +852,11 @@ class OpenClawToolExecutor:
         )
         result["target_peer"] = _serialize_peer(target_peer)
         result["source"] = source
+
+        # Track @mentions in group chats for mention limiting
+        if target_peer.peer_type != PeerType.USER:
+            await self._track_mentions_in_text(text, target_peer.peer_id, top_msg_id)
+
         return result
 
     async def _edit_message(
@@ -944,6 +952,45 @@ class OpenClawToolExecutor:
         result["source"] = source
         return result
 
+    _MENTION_RE = re.compile(r"@([A-Za-z_][A-Za-z0-9_]{3,31})")
+
+    async def _check_mention_limit(
+        self,
+        event: InboundTelegramEvent,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Check if the bot should switch to DM instead of tagging in chat."""
+        from apps.task_core.store.mention_tracker import check_mention_limit
+        username = str(args["username"]).lstrip("@")
+        chat_id = self._as_int(args.get("chat_id")) or event.peer.peer_id
+        topic_id = self._as_int(args.get("topic_id")) or event.top_msg_id
+        return await check_mention_limit(
+            mentioned_username=username,
+            chat_id=chat_id,
+            topic_id=topic_id,
+        )
+
+    async def _track_mentions_in_text(
+        self,
+        text: str,
+        chat_id: int,
+        topic_id: int | None,
+    ) -> None:
+        """Extract @username mentions from text and record them in mention_tracker."""
+        mentions = self._MENTION_RE.findall(text)
+        if not mentions:
+            return
+        try:
+            from apps.task_core.store.mention_tracker import record_mention
+            for username in set(mentions):
+                await record_mention(
+                    mentioned_username=username,
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                )
+        except Exception as e:
+            log.warning("Failed to track mentions: %s", e)
+
     async def _resolve_peer_query(
         self,
         *,
@@ -985,8 +1032,6 @@ class OpenClawToolExecutor:
         return await self._resolve_chat_peer(value)
 
     async def _resolve_chat_peer(self, query: str) -> tuple[PeerRef, str]:
-        import re as _re
-
         value = query.strip()
         if not value:
             raise ToolExecutionError("пустой запрос для resolve_target_context")
@@ -996,7 +1041,7 @@ class OpenClawToolExecutor:
             return await self.transport.resolve_peer_ref(chat_id), "chat_id"
 
         # Extract numeric ID from "Name (123456)" pattern (LLM often does this)
-        id_in_parens = _re.search(r"\((\d{5,})\)\s*$", value)
+        id_in_parens = re.search(r"\((\d{5,})\)\s*$", value)
         if id_in_parens:
             chat_id = normalize_chat_id(id_in_parens.group(1))
             return await self.transport.resolve_peer_ref(chat_id), "chat_id"

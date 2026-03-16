@@ -514,4 +514,33 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "check_mention_limit",
+                "description": (
+                    "Проверь лимит тегов @username в чате перед тем как тегать. "
+                    "Если should_dm=true — не тегай в чате, а отправь в личку через send_private_message. "
+                    "Лимит: 2 тега в одном чате/теме без ответа от адресата. После ответа счётчик сбрасывается."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "username": {
+                            "type": "string",
+                            "description": "@username человека которого хочешь тегнуть (без @)",
+                        },
+                        "chat_id": {
+                            "type": "integer",
+                            "description": "ID чата где планируется тег",
+                        },
+                        "topic_id": {
+                            "type": "integer",
+                            "description": "ID темы (для форум-чатов)",
+                        },
+                    },
+                    "required": ["username"],
+                },
+            },
+        },
     ]
