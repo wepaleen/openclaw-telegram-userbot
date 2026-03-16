@@ -277,7 +277,7 @@ class OpenClawToolExecutor:
             if resolved_reply is None:
                 resolved_reply = top_msg_id
 
-        if resolved_reply is None and top_msg_id is None and prefer_current_context:
+        if resolved_reply is None and top_msg_id is None and prefer_current_context and peer.peer_id == event.peer.peer_id:
             resolved_reply = event.reply_to_msg_id
 
         return {

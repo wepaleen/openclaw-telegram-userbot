@@ -280,7 +280,10 @@ class OpenClawAgentRuntime:
                 llm_text = self.client.extract_text(response)
                 # If text was stripped (pseudo-tool-call), provide a safe fallback
                 if not llm_text:
-                    llm_text = "Не смог обработать запрос. Попробуйте переформулировать."
+                    if is_scheduled_agent:
+                        llm_text = "Запланированное действие выполнено, но нечего сообщить."
+                    else:
+                        llm_text = "Не смог обработать запрос. Попробуйте переформулировать."
 
                 # Fallback: if emergency detected but no escalation was sent,
                 # force escalation by calling send_message directly

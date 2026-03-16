@@ -247,7 +247,7 @@ class OpenClawChatClient:
     def extract_text(cls, response: dict[str, Any]) -> str:
         choices = response.get("choices", [])
         if not choices:
-            return "Не смог получить ответ от OpenClaw."
+            return ""
 
         message = choices[0].get("message", {})
         content = message.get("content")
@@ -267,7 +267,7 @@ class OpenClawChatClient:
                 return cleaned  # may be empty — runtime handles that
 
             return text
-        return "Не смог получить текстовый ответ от OpenClaw."
+        return ""
 
     @staticmethod
     def _extract_textual_tool_call(content: Any) -> OpenClawToolCall | None:
