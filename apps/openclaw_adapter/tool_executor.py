@@ -108,6 +108,8 @@ class OpenClawToolExecutor:
             return await self._list_available_chats(limit=int(args.get("limit", 50)))
         if name == "list_contacts":
             return await self._list_contacts(args)
+        if name == "add_contact":
+            return await self._add_contact(args)
         if name == "resolve_recipient":
             return await self._resolve_recipient(
                 query=str(args["query"]),
@@ -206,6 +208,21 @@ class OpenClawToolExecutor:
             ]
         return {"contacts": rows[:limit]}
 
+    async def _add_contact(self, args: dict[str, Any]) -> dict[str, Any]:
+        from resolver.contacts import add_contact
+        display_name = str(args["display_name"]).strip()
+        username = self._as_str(args.get("username"))
+        if username:
+            username = username.lstrip("@")
+        aliases = args.get("aliases") or []
+        notes = self._as_str(args.get("notes"))
+        return await add_contact(
+            display_name=display_name,
+            username=username,
+            aliases=aliases,
+            notes=notes,
+        )
+
     async def _resolve_recipient(
         self,
         *,
@@ -236,7 +253,15 @@ class OpenClawToolExecutor:
         is_topic_message = bool(top_msg_id)
 
         if chat_query:
-            peer, source = await self._resolve_chat_peer(chat_query)
+            try:
+                peer, source = await self._resolve_chat_peer(chat_query)
+            except ToolExecutionError:
+                # If ambiguous but one match is the current chat — prefer it
+                if prefer_current_context and event.peer.title and chat_query.lower() in event.peer.title.lower():
+                    peer = event.peer
+                    source = "current_context"
+                else:
+                    raise
             top_msg_id = None
             is_topic_message = False
             if resolved_reply is None and prefer_current_context and peer.peer_id == event.peer.peer_id:
@@ -960,6 +985,8 @@ class OpenClawToolExecutor:
         return await self._resolve_chat_peer(value)
 
     async def _resolve_chat_peer(self, query: str) -> tuple[PeerRef, str]:
+        import re as _re
+
         value = query.strip()
         if not value:
             raise ToolExecutionError("пустой запрос для resolve_target_context")
@@ -968,10 +995,20 @@ class OpenClawToolExecutor:
             chat_id = normalize_chat_id(value)
             return await self.transport.resolve_peer_ref(chat_id), "chat_id"
 
+        # Extract numeric ID from "Name (123456)" pattern (LLM often does this)
+        id_in_parens = _re.search(r"\((\d{5,})\)\s*$", value)
+        if id_in_parens:
+            chat_id = normalize_chat_id(id_in_parens.group(1))
+            return await self.transport.resolve_peer_ref(chat_id), "chat_id"
+
         db_matches = await search_chats(value)
         if len(db_matches) == 1:
             return await self.transport.resolve_peer_ref(int(db_matches[0]["chat_id"])), "chat_index"
         if len(db_matches) > 1:
+            # Prefer the forum (supergroup with topics) over a plain chat
+            forums = [m for m in db_matches if m.get("is_forum")]
+            if len(forums) == 1:
+                return await self.transport.resolve_peer_ref(int(forums[0]["chat_id"])), "chat_index"
             variants = ", ".join(
                 f"{match.get('title') or match['chat_id']} ({match['chat_id']})"
                 for match in db_matches[:5]

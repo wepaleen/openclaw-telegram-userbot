@@ -30,7 +30,11 @@ class OpenClawAdapterService:
         self.context_limit = context_limit
         self.dialogs_limit = dialogs_limit
 
-    async def handle_event(self, event: InboundTelegramEvent) -> AgentRunResult:
+    async def handle_event(
+        self,
+        event: InboundTelegramEvent,
+        max_tool_rounds: int | None = None,
+    ) -> AgentRunResult:
         recent_context = await self.transport.get_recent_context(
             peer=event.peer,
             limit=self.context_limit,
@@ -44,6 +48,7 @@ class OpenClawAdapterService:
             recent_context=recent_context,
             available_chats=available_chats,
             execute_tool=self.execute_tool,
+            max_tool_rounds=max_tool_rounds,
         )
 
     def can_stream(self, event: InboundTelegramEvent) -> bool:

@@ -23,6 +23,27 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "add_contact",
+                "description": "Добавить или обновить контакт в книге контактов. Используй когда кто-то сообщает правильный username или алиас человека.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "display_name": {"type": "string", "description": "Имя контакта (например 'Настя')"},
+                        "username": {"type": "string", "description": "@username в Telegram (без @)"},
+                        "aliases": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Альтернативные имена (например ['Анастасия', 'Настюша'])",
+                        },
+                        "notes": {"type": "string", "description": "Заметки о контакте"},
+                    },
+                    "required": ["display_name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "resolve_recipient",
                 "description": "Разрешить человека, @username или алиас в конкретный peer Telegram.",
                 "parameters": {

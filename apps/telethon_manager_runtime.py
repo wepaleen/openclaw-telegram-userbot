@@ -385,7 +385,7 @@ class TelethonOpenClawRuntime:
 
         lock = self._locks[event.session_key]
         async with lock:
-            result = await self.adapter.handle_event(event)
+            result = await self.adapter.handle_event(event, max_tool_rounds=30)
 
         if result.text.strip():
             await self._send_text(

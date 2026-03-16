@@ -69,39 +69,37 @@ async def search_contacts(query: str) -> list[dict[str, Any]]:
         if matches:
             return matches
 
+    # Fetch all contacts once, compare in Python (SQLite LOWER() is ASCII-only)
+    all_contacts = await db.execute_fetchall("SELECT * FROM contacts")
+
     # Exact display_name match
-    rows = await db.execute_fetchall(
-        "SELECT * FROM contacts WHERE LOWER(display_name) = ?", (q,)
-    )
-    for row in rows:
-        add_match(dict(row))
+    for c in all_contacts:
+        c_dict = dict(c)
+        if (c_dict.get("display_name") or "").lower() == q:
+            add_match(c_dict)
     if matches:
         return matches
 
-    # Search in aliases and partial name match
-    all_contacts = await db.execute_fetchall("SELECT * FROM contacts")
+    # Search in aliases (exact)
     for c in all_contacts:
         c_dict = dict(c)
-        aliases = _contact_aliases(c_dict)
-        # Check aliases
-        for alias in aliases:
+        for alias in _contact_aliases(c_dict):
             if alias.lower() == q:
                 add_match(c_dict)
                 break
     if matches:
         return matches
 
+    # Partial name/username/alias match
     for c in all_contacts:
         c_dict = dict(c)
-        aliases = _contact_aliases(c_dict)
-        # Partial name match
-        if q in c_dict["display_name"].lower():
+        if q in (c_dict.get("display_name") or "").lower():
             add_match(c_dict)
             continue
         if c_dict.get("username") and q in str(c_dict["username"]).lower():
             add_match(c_dict)
             continue
-        if any(q in alias.lower() for alias in aliases):
+        if any(q in alias.lower() for alias in _contact_aliases(c_dict)):
             add_match(c_dict)
 
     return matches

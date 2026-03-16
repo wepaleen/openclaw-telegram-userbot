@@ -35,7 +35,7 @@ _ACTION_KEYWORDS = re.compile(
     r"напомни|поставь|создай|удали|отмени|запланируй|"
     r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|"
     r"send\s|write\s|forward|pin\s|search\s|remind|schedule|"
-    r"посмотри|проверь|узнай|спроси",
+    r"посмотри|проверь|узнай|спроси|запусти|выполни|сделай",
     re.IGNORECASE,
 )
 
@@ -190,7 +190,8 @@ class OpenClawAgentRuntime:
 
         # Filter tools based on user role
         role_tools = filter_tool_schemas(self.tools, user_role)
-        needs_tools = self._needs_tools(event.text) or is_emergency
+        is_scheduled_agent = event.metadata.get("scheduled") == "1" if event.metadata else False
+        needs_tools = self._needs_tools(event.text) or is_emergency or is_scheduled_agent
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -223,6 +224,16 @@ class OpenClawAgentRuntime:
                 session_key=event.session_key,
                 tool_choice=first_tool_choice,
             )
+            # Some models ignore tool_choice=required and return text.
+            # If no tool calls found, retry once with tool_choice=auto.
+            if not self.client.extract_tool_calls(response):
+                log.warning("tool_choice=required but LLM returned no tool calls, retrying with auto")
+                response = await self.client.complete(
+                    messages=messages,
+                    tools=role_tools,
+                    session_key=event.session_key,
+                    tool_choice="auto",
+                )
         elif self.chat_client:
             # Conversational request → use free OpenClaw (no tools)
             log.info("Routing to OpenClaw (conversation)")

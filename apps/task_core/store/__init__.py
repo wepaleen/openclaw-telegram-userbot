@@ -1,6 +1,7 @@
 """Storage helpers for the task core package."""
 
 from apps.task_core.store.task_store import (
+    RecurrenceSpec,
     cancel_scheduled_action,
     cancel_reminder,
     complete_task,
@@ -26,6 +27,7 @@ from apps.task_core.store.task_store import (
 )
 
 __all__ = [
+    "RecurrenceSpec",
     "cancel_scheduled_action",
     "cancel_reminder",
     "complete_task",

@@ -43,7 +43,8 @@ async def _tick(send_fn, execute_fn) -> None:
         )
         try:
             tags = []
-            for field in ("source_sender_username", "mention_username"):
+            # Only tag the mention target, not the person who created the reminder
+            for field in ("mention_username",):
                 raw = reminder.get(field) or ""
                 if raw:
                     tag = raw if raw.startswith("@") else f"@{raw}"

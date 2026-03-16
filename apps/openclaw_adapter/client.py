@@ -141,14 +141,34 @@ class OpenClawChatClient:
                     except (json.JSONDecodeError, IndexError, KeyError):
                         continue
 
-    @staticmethod
-    def extract_tool_calls(response: dict[str, Any]) -> list[OpenClawToolCall]:
+    # Regex for DeepSeek-style textual tool calls embedded in content:
+    # <tool_call_begin>function<tool_sep>TOOL_NAME\n```json\n{ARGS}\n```<tool_call_end>
+    _TEXTUAL_TOOL_CALL_RE = re.compile(
+        r"<tool_call_begin>\s*function\s*<tool_sep>\s*"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+        r"```(?:json)?\s*(?P<args>\{.*?\})\s*```\s*"
+        r"<tool_call_end>",
+        re.DOTALL,
+    )
+
+    # Simpler variant: functionNAME\n{ARGS} (no XML tags)
+    _SIMPLE_FUNC_CALL_RE = re.compile(
+        r"function(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\n?"
+        r"(?:```(?:json)?\s*)?(?P<args>\{.*?\})(?:\s*```)?"
+        r"(?:\s*(?:<tool_call_end>)?)",
+        re.DOTALL,
+    )
+
+    @classmethod
+    def extract_tool_calls(cls, response: dict[str, Any]) -> list[OpenClawToolCall]:
         calls: list[OpenClawToolCall] = []
         choices = response.get("choices", [])
         if not choices:
             return calls
 
         message = choices[0].get("message", {})
+
+        # 1) Standard OpenAI-format tool_calls
         for tool_call in message.get("tool_calls", []):
             function = tool_call.get("function", {})
             raw_args = function.get("arguments") or "{}"
@@ -169,10 +189,62 @@ class OpenClawChatClient:
                     arguments=args,
                 )
             )
+
+        if calls:
+            return calls
+
+        # 2) Parse textual tool calls from content (DeepSeek quirk)
+        content = message.get("content") or ""
+        if "<tool_call_begin>" in content or (content.strip().startswith("function") and "{" in content):
+            textual = cls._parse_textual_tool_calls(content)
+            if textual:
+                log.warning(
+                    "Parsed %d textual tool call(s) from content: %s",
+                    len(textual),
+                    [tc.name for tc in textual],
+                )
+                return textual
+
         return calls
 
-    @staticmethod
-    def extract_text(response: dict[str, Any]) -> str:
+    @classmethod
+    def _parse_textual_tool_calls(cls, content: str) -> list[OpenClawToolCall]:
+        """Parse tool calls embedded as text in the response content."""
+        calls: list[OpenClawToolCall] = []
+
+        # Try XML-tagged format first
+        for i, match in enumerate(cls._TEXTUAL_TOOL_CALL_RE.finditer(content)):
+            name = match.group("name").strip()
+            try:
+                args = json.loads(match.group("args"))
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+            calls.append(OpenClawToolCall(
+                call_id=f"textual:{name}:{i}",
+                name=name,
+                arguments=args if isinstance(args, dict) else {},
+            ))
+
+        if calls:
+            return calls
+
+        # Fallback: simple functionNAME {ARGS} format
+        for i, match in enumerate(cls._SIMPLE_FUNC_CALL_RE.finditer(content)):
+            name = match.group("name").strip()
+            try:
+                args = json.loads(match.group("args"))
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+            calls.append(OpenClawToolCall(
+                call_id=f"textual:{name}:{i}",
+                name=name,
+                arguments=args if isinstance(args, dict) else {},
+            ))
+
+        return calls
+
+    @classmethod
+    def extract_text(cls, response: dict[str, Any]) -> str:
         choices = response.get("choices", [])
         if not choices:
             return "Не смог получить ответ от OpenClaw."
@@ -181,46 +253,19 @@ class OpenClawChatClient:
         content = message.get("content")
         if isinstance(content, str) and content.strip():
             text = content.strip()
-            # Strip pseudo-tool-call artifacts that some models produce
-            # e.g. "functionsend_message {\"text\":\"actual reply\",\"chat_query\":\"...\"}"
-            # e.g. "functionweb_search {\"query\":\"...\",\"limit\":3}"
-            if text.startswith("function") and "{" in text:
-                brace_idx = text.index("{")
-                try:
-                    payload = json.loads(text[brace_idx:])
-                    if isinstance(payload, dict):
-                        # If there's a "text" field, use it as the reply
-                        if payload.get("text"):
-                            log.warning(
-                                "Stripped pseudo-tool-call prefix from text response (had text field)"
-                            )
-                            return str(payload["text"])
-                        # Otherwise, it's a tool call with no text —
-                        # return a safe fallback instead of raw JSON
-                        func_name = text[len("function"):brace_idx].strip()
-                        log.warning(
-                            "Stripped pseudo-tool-call '%s' with no text field — returning fallback",
-                            func_name,
-                        )
-                        # Check if there's trailing text after the JSON block
-                        after_json = text[brace_idx:]
-                        # Find the end of JSON object (matching braces)
-                        depth = 0
-                        json_end = 0
-                        for i, ch in enumerate(after_json):
-                            if ch == "{":
-                                depth += 1
-                            elif ch == "}":
-                                depth -= 1
-                                if depth == 0:
-                                    json_end = brace_idx + i + 1
-                                    break
-                        trailing = text[json_end:].strip() if json_end else ""
-                        if trailing:
-                            return trailing
-                        return ""
-                except (json.JSONDecodeError, ValueError):
-                    pass
+
+            # Strip textual tool-call blocks (DeepSeek XML-tagged and simple formats)
+            cleaned = cls._TEXTUAL_TOOL_CALL_RE.sub("", text)
+            cleaned = cls._SIMPLE_FUNC_CALL_RE.sub("", cleaned)
+            # Also strip any leftover XML tags
+            cleaned = re.sub(r"</?tool_call_(?:begin|end)>", "", cleaned)
+            cleaned = re.sub(r"</?tool_sep>", "", cleaned)
+            cleaned = cleaned.strip()
+
+            if cleaned != text.strip():
+                log.warning("Stripped textual tool-call artifacts from content")
+                return cleaned  # may be empty — runtime handles that
+
             return text
         return "Не смог получить текстовый ответ от OpenClaw."
 

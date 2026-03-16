@@ -95,17 +95,18 @@ async def search_chats(query: str) -> list[dict[str, Any]]:
         if matches:
             return matches
 
+    # Fetch all chats once and compare in Python (SQLite LOWER() is ASCII-only)
+    all_chats = await db.execute_fetchall("SELECT * FROM chat_index")
+
     # By title (exact)
-    rows = await db.execute_fetchall(
-        "SELECT * FROM chat_index WHERE LOWER(title) = ?", (q,)
-    )
-    for row in rows:
-        add_match(dict(row))
+    for c in all_chats:
+        c_dict = dict(c)
+        if (c_dict.get("title") or "").lower() == q:
+            add_match(c_dict)
     if matches:
         return matches
 
     # By alias (exact)
-    all_chats = await db.execute_fetchall("SELECT * FROM chat_index")
     for c in all_chats:
         c_dict = dict(c)
         for alias in _chat_aliases(c_dict):
@@ -116,11 +117,10 @@ async def search_chats(query: str) -> list[dict[str, Any]]:
         return matches
 
     # By title (partial)
-    rows = await db.execute_fetchall(
-        "SELECT * FROM chat_index WHERE LOWER(title) LIKE ?", (f"%{q}%",)
-    )
-    for row in rows:
-        add_match(dict(row))
+    for c in all_chats:
+        c_dict = dict(c)
+        if q in (c_dict.get("title") or "").lower():
+            add_match(c_dict)
 
     for c in all_chats:
         c_dict = dict(c)
@@ -141,7 +141,11 @@ async def find_topic(chat_id: int, query: str) -> dict[str, Any] | None:
 
 
 async def search_topics(chat_id: int, query: str) -> list[dict[str, Any]]:
-    """Return exact/partial topic matches for a forum chat."""
+    """Return exact/partial topic matches for a forum chat.
+
+    Note: comparison is done in Python (not SQL LOWER()) because SQLite's
+    built-in LOWER() only handles ASCII and fails on Cyrillic/Unicode.
+    """
     db = await get_db()
     q = query.strip().lower()
     if not q:
@@ -167,23 +171,24 @@ async def search_topics(chat_id: int, query: str) -> list[dict[str, Any]]:
         if matches:
             return matches
 
-    # Exact title
-    rows = await db.execute_fetchall(
-        "SELECT * FROM topic_index WHERE chat_id = ? AND LOWER(title) = ?",
-        (chat_id, q),
+    # Fetch all topics for this chat and compare in Python
+    all_topics = await db.execute_fetchall(
+        "SELECT * FROM topic_index WHERE chat_id = ?", (chat_id,),
     )
-    for row in rows:
-        add_match(dict(row))
+
+    # Exact title
+    for row in all_topics:
+        r = dict(row)
+        if (r.get("title") or "").lower() == q:
+            add_match(r)
     if matches:
         return matches
 
     # Partial title
-    rows = await db.execute_fetchall(
-        "SELECT * FROM topic_index WHERE chat_id = ? AND LOWER(title) LIKE ?",
-        (chat_id, f"%{q}%"),
-    )
-    for row in rows:
-        add_match(dict(row))
+    for row in all_topics:
+        r = dict(row)
+        if q in (r.get("title") or "").lower():
+            add_match(r)
 
     return matches
 

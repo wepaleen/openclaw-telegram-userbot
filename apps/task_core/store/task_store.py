@@ -2,6 +2,8 @@
 
 import json
 import logging
+import re as _re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -326,16 +328,40 @@ def parse_time_delta(delta_str: str) -> timedelta | None:
     return None
 
 
-def parse_recurrence_interval(value: str | None) -> timedelta | None:
-    """Parse recurring intervals like 'каждый день' or 'every 2 hours'."""
-    import re
+@dataclass(slots=True)
+class RecurrenceSpec:
+    """Parsed recurrence: interval + optional weekday/time constraints."""
 
+    interval: timedelta
+    weekdays_only: bool = False
+    at_hour: int | None = None
+    at_minute: int | None = None
+
+
+def parse_recurrence_interval(value: str | None) -> RecurrenceSpec | None:
+    """Parse recurring intervals like 'каждый день', 'по будням в 10:00', 'every 2 hours'."""
     if not value:
         return None
 
     raw = str(value).strip().lower()
     if not raw:
         return None
+
+    # --- weekday patterns: "по будням", "по будням в 10:00", "weekdays at 10:00" ---
+    weekday_match = _re.match(
+        r"^(?:по будням|weekdays|по рабочим дням)"
+        r"(?:\s+(?:в\s*|at\s*)?(\d{1,2})[:.]\s*(\d{2}))?$",
+        raw,
+    )
+    if weekday_match:
+        hour = int(weekday_match.group(1)) if weekday_match.group(1) else None
+        minute = int(weekday_match.group(2)) if weekday_match.group(2) else None
+        return RecurrenceSpec(
+            interval=timedelta(days=1),
+            weekdays_only=True,
+            at_hour=hour,
+            at_minute=minute,
+        )
 
     alias_map = {
         "hourly": timedelta(hours=1),
@@ -352,14 +378,14 @@ def parse_recurrence_interval(value: str | None) -> timedelta | None:
         "еженедельно": timedelta(weeks=1),
     }
     if raw in alias_map:
-        return alias_map[raw]
+        return RecurrenceSpec(interval=alias_map[raw])
 
-    match = re.match(
+    match = _re.match(
         r"^(?:every|каждые?|раз в)\s+(\d+)\s*"
         r"(minutes?|mins?|hours?|days?|weeks?|"
         r"мин(?:ут[аы]?)?|час(?:а|ов)?|дн(?:я|ей)?|недел(?:ю|и|ь))$",
         raw,
-        re.IGNORECASE,
+        _re.IGNORECASE,
     )
     if not match:
         return None
@@ -367,13 +393,13 @@ def parse_recurrence_interval(value: str | None) -> timedelta | None:
     value_num = int(match.group(1))
     unit = match.group(2).lower()
     if unit in {"minute", "minutes", "min", "mins", "мин", "минута", "минуты", "минут"}:
-        return timedelta(minutes=value_num)
+        return RecurrenceSpec(interval=timedelta(minutes=value_num))
     if unit in {"hour", "hours", "час", "часа", "часов"}:
-        return timedelta(hours=value_num)
+        return RecurrenceSpec(interval=timedelta(hours=value_num))
     if unit in {"day", "days", "дня", "дней"}:
-        return timedelta(days=value_num)
+        return RecurrenceSpec(interval=timedelta(days=value_num))
     if unit in {"week", "weeks", "неделю", "недели", "недель"}:
-        return timedelta(weeks=value_num)
+        return RecurrenceSpec(interval=timedelta(weeks=value_num))
     return None
 
 
@@ -403,9 +429,29 @@ def parse_datetime_input(value: str | None, now: datetime | None = None) -> str 
 
     local_now = _local_now(now)
 
+    # "сейчас" / "now" — immediate
+    if raw.lower() in ("сейчас", "now", "немедленно", "прямо сейчас"):
+        return _to_utc_iso(local_now)
+
     delta = parse_time_delta(raw)
     if delta:
         return _to_utc_iso(local_now + delta)
+
+    # Recurrence-like phrases with embedded time: "каждый день в 10:00" / "по будням в 14:00"
+    # LLM sometimes passes recurrence as time_phrase — extract just the time
+    recurrence_time_match = re.match(
+        r"^(?:каждый день|ежедневно|по будням|по рабочим дням|daily|weekdays)"
+        r"(?:[,]?\s+(?:в\s*)?(\d{1,2}[:.]\d{2}))?$",
+        raw,
+        re.IGNORECASE,
+    )
+    if recurrence_time_match:
+        hm = parse_time_of_day(recurrence_time_match.group(1) or "10:00")
+        if hm:
+            target = local_now.replace(hour=hm[0], minute=hm[1], second=0, microsecond=0)
+            if target <= local_now:
+                target += timedelta(days=1)
+            return _to_utc_iso(target)
 
     # Strip "в " prefix for time-of-day parsing ("в 18:42" -> "18:42")
     time_raw = re.sub(r"^в\s+", "", raw, flags=re.IGNORECASE)
@@ -492,12 +538,12 @@ def compute_next_recurrence_fire_at(
     *,
     now: datetime | None = None,
 ) -> str | None:
-    """Compute the next UTC fire time for a recurring reminder."""
+    """Compute the next UTC fire time for a recurring reminder/action."""
     if not current_fire_at or not recurrence:
         return None
 
-    interval = parse_recurrence_interval(recurrence)
-    if interval is None:
+    spec = parse_recurrence_interval(recurrence)
+    if spec is None:
         return None
 
     try:
@@ -508,9 +554,28 @@ def compute_next_recurrence_fire_at(
     if next_fire.tzinfo is None:
         next_fire = next_fire.replace(tzinfo=timezone.utc)
 
+    # If spec has a fixed time-of-day, pin it in local tz
+    if spec.at_hour is not None:
+        local_fire = next_fire.astimezone(settings.tzinfo)
+        local_fire = local_fire.replace(
+            hour=spec.at_hour,
+            minute=spec.at_minute or 0,
+            second=0,
+            microsecond=0,
+        )
+        next_fire = local_fire.astimezone(timezone.utc)
+
     reference = now or datetime.now(timezone.utc)
     while next_fire <= reference:
-        next_fire += interval
+        next_fire += spec.interval
+
+    # Skip weekends for weekdays_only
+    if spec.weekdays_only:
+        local_fire = next_fire.astimezone(settings.tzinfo)
+        while local_fire.weekday() >= 5:  # 5=Sat, 6=Sun
+            local_fire += timedelta(days=1)
+        next_fire = local_fire.astimezone(timezone.utc)
+
     return next_fire.astimezone(timezone.utc).isoformat()
 
 
