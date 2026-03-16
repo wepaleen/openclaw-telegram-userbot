@@ -42,22 +42,34 @@ async def _tick(send_fn, execute_fn) -> None:
             str(reminder.get("text", ""))[:80],
         )
         try:
-            tags = []
-            # Only tag the mention target, not the person who created the reminder
-            for field in ("mention_username",):
-                raw = reminder.get(field) or ""
-                if raw:
-                    tag = raw if raw.startswith("@") else f"@{raw}"
-                    if tag not in tags:
-                        tags.append(tag)
-            tag_prefix = " ".join(tags)
-            reminder_text = f"🔔 {tag_prefix} Напоминание: {reminder['text']}" if tag_prefix else f"🔔 Напоминание: {reminder['text']}"
-            await send_fn(
-                chat_id=reminder["target_chat_id"],
-                target=reminder.get("target_user"),
-                text=reminder_text,
-                topic_id=reminder.get("target_topic_id"),
-            )
+            mention_raw = reminder.get("mention_username") or ""
+            mention_tag = ""
+            if mention_raw:
+                mention_tag = mention_raw if mention_raw.startswith("@") else f"@{mention_raw}"
+
+            reminder_text = f"🔔 {mention_tag} Напоминание: {reminder['text']}" if mention_tag else f"🔔 Напоминание: {reminder['text']}"
+
+            # If reminder targets a specific person, send to their DM instead of the group thread
+            if mention_raw and reminder.get("target_topic_id"):
+                # Send to DM — use mention_username as target, no topic
+                target_user = mention_raw.lstrip("@")
+                log.info(
+                    "Reminder %d: sending to DM of @%s instead of topic %s",
+                    reminder["id"], target_user, reminder.get("target_topic_id"),
+                )
+                await send_fn(
+                    chat_id=reminder["target_chat_id"],
+                    target=target_user,
+                    text=f"🔔 Напоминание: {reminder['text']}",
+                    topic_id=None,
+                )
+            else:
+                await send_fn(
+                    chat_id=reminder["target_chat_id"],
+                    target=reminder.get("target_user"),
+                    text=reminder_text,
+                    topic_id=reminder.get("target_topic_id"),
+                )
             await mark_reminder_fired(reminder["id"])
             await log_action(
                 action_type="deliver_reminder",

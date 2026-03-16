@@ -271,7 +271,7 @@ class OpenClawToolExecutor:
             if peer.peer_type == PeerType.USER:
                 raise ToolExecutionError("нельзя искать topic context внутри личного диалога")
             topic = await self._resolve_topic(peer.peer_id, topic_query)
-            top_msg_id = int(topic["top_message_id"])
+            top_msg_id = int(topic["topic_id"])
             is_topic_message = True
             source = "topic_index"
             if resolved_reply is None:
@@ -822,7 +822,7 @@ class OpenClawToolExecutor:
             top_msg_id = None
             if self._as_str(args.get("topic_query")) and target_peer.peer_type != PeerType.USER:
                 topic = await self._resolve_topic(target_peer.peer_id, str(args["topic_query"]))
-                top_msg_id = int(topic["top_message_id"])
+                top_msg_id = int(topic["topic_id"])
                 if reply_to_msg_id is None:
                     reply_to_msg_id = top_msg_id
         else:
