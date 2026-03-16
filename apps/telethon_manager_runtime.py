@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any
 
 import httpx
 
+from apps.rate_limit import rate_limiter
 from apps.telethon_bridge.formatting import md_to_tg_html
 from apps.openclaw_adapter import (
     OpenClawAdapterService,
@@ -87,6 +87,14 @@ class TelethonOpenClawRuntime:
 
         event.text = normalized_text
 
+        # Rate limit check (admins exempt)
+        if event.sender_id and event.sender_id not in settings.admin_user_ids:
+            allowed, retry_after = rate_limiter.check(event.sender_id)
+            if not allowed:
+                log.info("Rate limited user %s (retry in %.1fs)", event.sender_id, retry_after)
+                await self._reply_text(event, f"Слишком много запросов. Подожди {int(retry_after)} сек.")
+                return
+
         # Instant 👀 — acknowledge the message was seen
         try:
             await self.transport.send_reaction(
@@ -107,14 +115,14 @@ class TelethonOpenClawRuntime:
         lock = self._locks[event.session_key]
         async with lock:
             try:
-                if self.adapter.can_stream(event):
-                    bot_text = await self._handle_streaming(event)
-                    reaction = self._pick_reaction(event.text, bot_text, 0)
-                else:
-                    result = await self.adapter.handle_event(event)
-                    if result.text.strip():
-                        await self._reply_text(event, result.text)
-                    reaction = self._pick_reaction(event.text, result.text, result.tool_rounds)
+                result = await self.adapter.handle_event(event)
+                # Strip leading "..." placeholder that some models prepend
+                reply_text = result.text.strip()
+                if reply_text.startswith("..."):
+                    reply_text = reply_text.lstrip(".").strip()
+                if reply_text:
+                    await self._reply_text(event, reply_text)
+                reaction = self._pick_reaction(event.text, result.text, result.tool_rounds)
             except httpx.HTTPStatusError as e:
                 body = e.response.text[:1000] if e.response is not None else ""
                 await self._reply_text(
@@ -196,65 +204,6 @@ class TelethonOpenClawRuntime:
 
         # Conversational reply
         return "👌"
-
-    async def _handle_streaming(self, event: InboundTelegramEvent) -> str:
-        """Stream conversational response: send placeholder, update progressively."""
-        # Send initial placeholder
-        placeholder = await self.transport.send(
-            OutboundTelegramCommand(
-                target_peer=event.peer,
-                text="...",
-                reply_to_msg_id=event.message_id,
-                top_msg_id=event.top_msg_id if event.is_topic_message else None,
-                idempotency_key=f"stream:placeholder:{event.event_id}",
-            )
-        )
-        placeholder_id = placeholder.get("message_id")
-        if not placeholder_id:
-            # Fallback to non-streaming
-            log.warning("Could not get placeholder message_id, falling back to non-streaming")
-            result = await self.adapter.handle_event(event)
-            if result.text.strip():
-                await self._reply_text(event, result.text)
-            return result.text
-
-        full_text = ""
-        last_update = time.monotonic()
-        update_interval = 1.5  # seconds between edits
-
-        try:
-            async for chunk in self.adapter.stream_event(event):
-                full_text += chunk
-                now = time.monotonic()
-                if now - last_update >= update_interval and full_text.strip():
-                    try:
-                        html = md_to_tg_html(full_text + " ▌")
-                        await self.transport.edit_message(
-                            event.peer,
-                            message_id=placeholder_id,
-                            text=html,
-                            parse_mode="html",
-                        )
-                        last_update = now
-                    except Exception as e:
-                        log.debug("Stream edit failed: %s", e)
-        except Exception as e:
-            log.warning("Streaming failed, text so far: %d chars: %s", len(full_text), e)
-
-        # Final edit with complete text (no cursor)
-        final_text = full_text.strip() if full_text.strip() else "Не смог получить ответ."
-        try:
-            html = md_to_tg_html(final_text)
-            await self.transport.edit_message(
-                event.peer,
-                message_id=placeholder_id,
-                text=html,
-                parse_mode="html",
-            )
-        except Exception as e:
-            log.warning("Final stream edit failed: %s", e)
-
-        return final_text
 
     async def _reply_text(self, event: InboundTelegramEvent, text: str) -> None:
         await self._send_text(

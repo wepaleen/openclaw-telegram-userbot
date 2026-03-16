@@ -195,17 +195,18 @@ def build_default_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "schedule_action",
-                "description": "Запланировать отложенную отправку сообщения или повторный запуск агента в Telegram на указанное время. Для сложных сценариев укажи action_type=run_agent.",
+                "description": "Запланировать отложенную отправку или повторный запуск агента. action_type=run_agent для агентских сценариев (дайджест, стэндап, мониторинг). С recurrence — повторяющееся действие ('каждый день', 'every 2 hours', 'еженедельно').",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "time_phrase": {"type": "string"},
-                        "text": {"type": "string"},
+                        "text": {"type": "string", "description": "Текст сообщения или промпт для агента (action_type=run_agent)"},
                         "target_query": {"type": "string"},
                         "chat_query": {"type": "string"},
                         "topic_query": {"type": "string"},
                         "reply_to_message_id": {"type": "integer"},
-                        "action_type": {"type": "string"},
+                        "action_type": {"type": "string", "description": "send_message, send_private, send_topic, run_agent"},
+                        "recurrence": {"type": "string", "description": "Повторение: 'каждый день', 'every 2 hours', 'еженедельно'"},
                     },
                     "required": ["time_phrase", "text"],
                 },

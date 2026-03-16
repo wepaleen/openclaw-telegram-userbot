@@ -194,18 +194,20 @@ async def create_scheduled_action(
     execute_at: str,
     source_chat_id: int | None = None,
     source_message_id: int | None = None,
+    recurrence: str | None = None,
 ) -> dict[str, Any]:
     db = await get_db()
     cursor = await db.execute(
         "INSERT INTO scheduled_actions "
-        "(action_type, action_params, execute_at, source_chat_id, source_message_id) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(action_type, action_params, execute_at, source_chat_id, source_message_id, recurrence) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             action_type,
             json.dumps(action_params, ensure_ascii=False),
             execute_at,
             source_chat_id,
             source_message_id,
+            recurrence,
         ),
     )
     await db.commit()

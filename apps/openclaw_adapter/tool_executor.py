@@ -558,12 +558,14 @@ class OpenClawToolExecutor:
                 "schedule_action пока поддерживает только send_message, send_chat, send_private, send_topic и run_agent"
             )
 
+        recurrence = self._as_str(args.get("recurrence"))
         result = await create_scheduled_action(
             action_type=action_type,
             action_params=action_params,
             execute_at=parsed_time["remind_at_utc"],
             source_chat_id=event.peer.peer_id,
             source_message_id=event.message_id,
+            recurrence=recurrence,
         )
         result["execute_at_local"] = parsed_time["remind_at_local"]
         result["timezone"] = parsed_time["timezone"]

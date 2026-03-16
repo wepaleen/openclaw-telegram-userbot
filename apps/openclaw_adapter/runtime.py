@@ -33,9 +33,9 @@ ToolExecutor = Callable[[str, dict[str, Any], InboundTelegramEvent], Awaitable[d
 _ACTION_KEYWORDS = re.compile(
     r"напиши|отправь|пошли|скинь|перешли|закрепи|найди|покажи|прочитай|"
     r"напомни|поставь|создай|удали|отмени|запланируй|"
-    r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|таблиц[аеуыёй]|spreadsheet|"
-    r"send|write|forward|pin|search|read|list|get|show|remind|schedule|task|"
-    r"посмотри|проверь|узнай|спроси|(?<![а-яёА-ЯЁ])скажи\s",
+    r"задач[аеуи]|напоминани[еяй]|дедлайн|таск|"
+    r"send\s|write\s|forward|pin\s|search\s|remind|schedule|"
+    r"посмотри|проверь|узнай|спроси",
     re.IGNORECASE,
 )
 
@@ -48,6 +48,20 @@ _ESCALATION_KEYWORDS = re.compile(
     r"суд\s|иск\s|претензи[яию]|юрист|адвокат|"
     r"репутаци[яию]|скандал|негатив\s+в\s+(?:сми|соцсет|интернет)|"
     r"отказыва[юет](?:сь|мся)|отказ\s+от\s+(?:услуг|сотрудничеств)",
+    re.IGNORECASE,
+)
+
+_CAPABILITY_QUESTION_CUES = re.compile(
+    r"имеешь\s+доступ|есть\s+ли\s+доступ|есть\s+доступ|"
+    r"умеешь|поддерживаешь|работаешь\s+с|можно\s+ли\s+подключить|"
+    r"можешь\s+ли|ты\s+(?:можешь|умеешь)|как\s+(?:можно|ты\s+можешь)|"
+    r"расскажи|объясни|что\s+(?:такое|значит|делает)|как\s+работает",
+    re.IGNORECASE,
+)
+
+_ACTION_INTENT_VERBS = re.compile(
+    r"напиши|отправь|пошли|скинь|перешли|закрепи|найди|покажи|прочитай|"
+    r"напомни|поставь|создай|удали|отмени|запланируй|посмотри|проверь|узнай|спроси",
     re.IGNORECASE,
 )
 
@@ -176,7 +190,7 @@ class OpenClawAgentRuntime:
 
         # Filter tools based on user role
         role_tools = filter_tool_schemas(self.tools, user_role)
-        needs_tools = self._looks_like_action(event.text) or is_emergency
+        needs_tools = self._needs_tools(event.text) or is_emergency
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -219,14 +233,24 @@ class OpenClawAgentRuntime:
             # If OpenClaw returns a clean text response, return it directly
             calls = self.client.extract_tool_calls(response)
             if not calls:
-                await self._save_session(event.session_key, messages, response)
-                return AgentRunResult(
-                    text=self.client.extract_text(response),
+                extracted = self.client.extract_text(response)
+                if extracted:
+                    await self._save_session(event.session_key, messages, response)
+                    return AgentRunResult(
+                        text=extracted,
+                        messages=messages,
+                        raw_response=response,
+                        tool_rounds=0,
+                    )
+                # Empty text (pseudo-tool-call stripped) — retry with tool-calling LLM
+                log.info("OpenClaw returned empty text (pseudo-tool-call stripped), retrying with tool LLM")
+                response = await self.client.complete(
                     messages=messages,
-                    raw_response=response,
-                    tool_rounds=0,
+                    tools=role_tools,
+                    session_key=event.session_key,
+                    tool_choice="auto",
                 )
-            # Unlikely but if OpenClaw somehow returns tool calls, proceed with tool loop
+            # If OpenClaw somehow returns tool calls, also proceed with tool LLM
         else:
             # No OpenClaw configured → use tool LLM for everything
             first_tool_choice = "auto"
@@ -243,6 +267,9 @@ class OpenClawAgentRuntime:
             calls = self.client.extract_tool_calls(response)
             if not calls:
                 llm_text = self.client.extract_text(response)
+                # If text was stripped (pseudo-tool-call), provide a safe fallback
+                if not llm_text:
+                    llm_text = "Не смог обработать запрос. Попробуйте переформулировать."
 
                 # Fallback: if emergency detected but no escalation was sent,
                 # force escalation by calling send_message directly
@@ -272,6 +299,28 @@ class OpenClawAgentRuntime:
 
             assistant_message = response.get("choices", [{}])[0].get("message", {})
             messages.append(assistant_message)
+
+            # Guard: if LLM calls send_message to the SAME chat with no
+            # chat_query/target_query, treat the text as a normal reply instead
+            # of executing the tool (prevents raw JSON from being shown).
+            if len(calls) == 1 and calls[0].name == "send_message":
+                sm_args = calls[0].arguments
+                if (
+                    not sm_args.get("chat_query")
+                    and not sm_args.get("target_query")
+                    and not sm_args.get("topic_query")
+                    and sm_args.get("text")
+                ):
+                    log.info(
+                        "Intercepted send_message to current chat — returning text as reply"
+                    )
+                    await self._save_session(event.session_key, messages, response)
+                    return AgentRunResult(
+                        text=str(sm_args["text"]),
+                        messages=messages,
+                        raw_response=response,
+                        tool_rounds=tool_round,
+                    )
 
             for call in calls:
                 log.info(
@@ -476,6 +525,16 @@ class OpenClawAgentRuntime:
     @staticmethod
     def _is_emergency(text: str) -> bool:
         return bool(_ESCALATION_KEYWORDS.search(text))
+
+    @staticmethod
+    def _is_capability_question(text: str) -> bool:
+        if not _CAPABILITY_QUESTION_CUES.search(text):
+            return False
+        return not bool(_ACTION_INTENT_VERBS.search(text))
+
+    @classmethod
+    def _needs_tools(cls, text: str) -> bool:
+        return cls._looks_like_action(text) and not cls._is_capability_question(text)
 
     def _build_user_content(
         self,

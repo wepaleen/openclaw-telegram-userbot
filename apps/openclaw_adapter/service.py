@@ -47,8 +47,16 @@ class OpenClawAdapterService:
         )
 
     def can_stream(self, event: InboundTelegramEvent) -> bool:
-        """Check if this event can use streaming (conversational, no tools needed)."""
-        return self.runtime.chat_client is not None and not self.runtime._looks_like_action(event.text)
+        """Check if this event can use streaming (DM only, conversational, no tools)."""
+        if self.runtime.chat_client is None:
+            return False
+        if self.runtime._needs_tools(event.text):
+            return False
+        # Only stream in DMs — groups/topics have stricter rate limits
+        from shared.schemas.telegram import PeerType
+        if event.peer.peer_type != PeerType.USER:
+            return False
+        return True
 
     async def stream_event(self, event: InboundTelegramEvent) -> AsyncIterator[str]:
         """Stream conversational response chunks for an event.

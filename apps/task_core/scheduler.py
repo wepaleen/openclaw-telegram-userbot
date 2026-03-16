@@ -8,6 +8,7 @@ from apps.task_core.store.session_cache import clear_old_sessions
 from apps.task_core.store.task_store import (
     compute_next_recurrence_fire_at,
     create_reminder,
+    create_scheduled_action,
     format_local_datetime,
     get_due_tasks,
     get_pending_actions,
@@ -148,6 +149,25 @@ async def _tick(send_fn, execute_fn) -> None:
                     action["id"],
                     action["action_type"],
                 )
+            # Reschedule recurring actions
+            recurrence = action.get("recurrence")
+            if recurrence and not error:
+                next_at = compute_next_recurrence_fire_at(
+                    action.get("execute_at"), recurrence,
+                )
+                if next_at:
+                    await create_scheduled_action(
+                        action_type=action["action_type"],
+                        action_params=action["action_params"],
+                        execute_at=next_at,
+                        source_chat_id=action.get("source_chat_id"),
+                        source_message_id=action.get("source_message_id"),
+                        recurrence=recurrence,
+                    )
+                    log.info(
+                        "Rescheduled recurring action %d -> %s",
+                        action["id"], next_at,
+                    )
         except Exception as e:
             await mark_action_executed(action["id"], error=str(e))
             log.error("Failed scheduled action %d: %s", action["id"], e)
